@@ -1,1157 +1,1004 @@
-// ==========================================
-// CONFIGURACIÓN DE GOOGLE APPS SCRIPT
-// ==========================================
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzYcfPzxhhlU4WOC0g8UvOUTQtypRNTvPYGGGpcMPPw9PuJPxsKirGPrg2G1csBDVdH/exec';
+/**
+ * @fileoverview CORE GENAPP - Sistema POE Industrial (DUAL API + RBAC + MAPA DINÁMICO)
+ */
 
-// ==========================================
-// 0. RECUPERACIÓN INMEDIATA DEL TEMA (Anti-FOUC)
-// ==========================================
-// Ejecutamos esto inmediatamente para evitar el parpadeo blanco al recargar
-const savedTheme = sessionStorage.getItem('moduloResiduosTheme');
-if (savedTheme === 'dark') {
-    document.documentElement.classList.add('dark');
-}
-// ==========================================
-// CONFIGURACIÓN DE PROCESAMIENTO DE IMÁGENES (HACCP OPTIMIZED)
-// ==========================================
-const MAX_IMAGE_WIDTH = 1024; // Ancho máximo en px (Suficiente para ver detalles)
-const IMAGE_QUALITY = 0.7;    // Calidad de compresión JPEG (0.0 a 1.0)
+const GAS_ENDPOINT = "https://script.google.com/macros/s/AKfycbylXo9sXzLBYCdyB1AiDOa7-cyvPutjmy0XCun33Ic1YSFM0YdruE6WfkSt0SCz_PSO2Q/exec"; 
+const GAS_DICT_ENDPOINT = "https://script.google.com/macros/s/AKfycbxAHJeIS_Dq91olhikoJpRPZEVPf-wPOCs_NGQ796oowVOQRRX8jeOeiNeFeDw3zrxE/exec"; 
 
-// ==========================================
-// 1. ESTADO CENTRALIZADO Y COMUNICACIÓN HUB
-// ==========================================
-const AppState = {
-  user: null,
-  isSessionVerified: false
+let state = { 
+    poes: [], 
+    areas: [],       
+    config: [], 
+    form: { advancedSteps: [], editingId: null, editingStepId: null },
+    user: null,               
+    isSessionVerified: false,
+    activeAreaFilter: 'TODAS'
 };
 
-let chartAreaInstancia = null;
-let chartTipoInstancia = null;
-let datosCargados = false; 
-let isFetchingDashboard = false;
-let todosLosRegistros = []; 
-let registrosFiltradosActuales = []; 
-
-// ESCUCHADOR DE MENSAJES (WINDOW.PARENT)
 window.addEventListener('message', (event) => {
-  const { type, user, theme } = event.data || {};
-  
-  if (type === 'THEME_UPDATE') {
-      document.documentElement.classList.toggle('dark', theme === 'dark');
-      sessionStorage.setItem('moduloResiduosTheme', theme); // Persistimos el tema
-  }
-
-  if (type === 'SESSION_SYNC' && user) {
-      document.documentElement.classList.toggle('dark', theme === 'dark');
-      if (theme) sessionStorage.setItem('moduloResiduosTheme', theme); // Persistimos el tema
-      
-      AppState.user = user;
-      AppState.isSessionVerified = true;
-      sessionStorage.setItem('moduloResiduosUser', JSON.stringify(user));
-      
-      mostrarAplicacion();
-  }
+    const { type, user, theme } = event.data || {};
+    if (type === 'THEME_UPDATE') document.documentElement.classList.toggle('dark', theme === 'dark');
+    if (type === 'SESSION_SYNC' && user) {
+        document.documentElement.classList.toggle('dark', theme === 'dark');
+        const isNewUser = !state.user || state.user.usuario !== user.usuario;
+        state.user = user;
+        state.isSessionVerified = true;
+        sessionStorage.setItem('moduloUserPOE', JSON.stringify(user)); 
+        if (isNewUser) window.refreshUI();
+    }
 });
 
-document.addEventListener('DOMContentLoaded', () => {
-  actualizarTimestamp();
-  inicializarFiltrosFechas();
+window.getPermisos = function() {
+    if (!state.user) return { canEdit: false, isOperario: true, area: '' };
+    const rol = String(state.user.rol).toUpperCase();
+    const canEdit = ['GERENTE', 'JEFE', 'SUPERVISOR', 'ADMINISTRADOR', 'ADMIN', 'SISTEMAS'].includes(rol);
+    return { canEdit, isOperario: !canEdit, area: String(state.user.area).toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "") };
+};
 
-  const savedUser = sessionStorage.getItem('moduloResiduosUser');
-  if (savedUser) {
-      AppState.user = JSON.parse(savedUser);
-      AppState.isSessionVerified = true;
-      mostrarAplicacion();
-  }
+window.initRichEditors = function() {
+  document.querySelectorAll('.rich-editor').forEach(editor => {
+      if (editor.classList.contains('initialized')) return;
+      editor.classList.add("initialized");
+      editor.addEventListener('paste', function(e) {
+          e.preventDefault();
+          const text = (e.originalEvent || e).clipboardData.getData('text/plain');
+          document.execCommand('insertText', false, text);
+      });
+      editor.addEventListener('keydown', function(e) {
+          if (e.key === 'Enter' && !document.queryCommandState('insertOrderedList') && !document.queryCommandState('insertUnorderedList')) {
+              document.execCommand('insertLineBreak');
+              e.preventDefault();
+          }
+      });
+  });
+};
 
-  // Avisar al Hub que estamos listos para recibir credenciales
-  window.parent.postMessage({ type: 'MODULO_LISTO' }, '*');
+window.setListType = function(type) {
+    let node = document.getSelection().anchorNode;
+    while(node && node.nodeName !== 'OL' && node.nodeName !== 'DIV') { node = node.parentNode; }
+    if(node && node.nodeName === 'OL') node.type = type;
+};
 
-  setTimeout(() => {
-      if (!AppState.isSessionVerified) {
-          const statusTxt = document.getElementById('txt-usuario-activo');
-          if (statusTxt) statusTxt.innerHTML = '<i class="ph ph-warning text-red-500"></i> Esperando autorización del Hub...';
+const getFieldValue = (id) => { const el = document.getElementById(id); return el ? (el.classList.contains("rich-editor") ? el.innerHTML.trim() : el.value.trim()) : ""; };
+const setFieldValue = (id, val) => { const el = document.getElementById(id); if (!el) return; if (el.classList.contains("rich-editor")) el.innerHTML = val || ""; else el.value = val || ""; };
+
+const POEDB = {
+  db: null, useRAM: false, ramDB: { poes: [], sync_queue: [], sys_config: [], areas: [] },
+  init() {
+    return new Promise((resolve) => {
+      try {
+        const req = indexedDB.open("POE_DB_V8", 2); 
+        req.onupgradeneeded = (e) => {
+          const db = e.target.result;
+          if (!db.objectStoreNames.contains("poes")) db.createObjectStore("poes", { keyPath: "id" });
+          if (!db.objectStoreNames.contains("sync_queue")) db.createObjectStore("sync_queue", { keyPath: "id" });
+          if (!db.objectStoreNames.contains("sys_config")) db.createObjectStore("sys_config", { keyPath: "key" });
+          if (!db.objectStoreNames.contains("areas")) db.createObjectStore("areas", { keyPath: "id" }); 
+        };
+        req.onsuccess = (e) => { this.db = e.target.result; resolve(); };
+        req.onerror = () => { this.useRAM = true; resolve(); };
+      } catch (e) { this.useRAM = true; resolve(); }
+    });
+  },
+  save(store, data) {
+    return new Promise((resolve) => {
+      if (this.useRAM) {
+        const idx = this.ramDB[store].findIndex((i) => i.id === data.id || i.key === data.key);
+        if (idx > -1) this.ramDB[store][idx] = data; else this.ramDB[store].push(data);
+        return resolve();
       }
-  }, 4000);
-  
-  SyncManager.updateBadge();
-});
-
-function mostrarAplicacion() {
-  const appContainer = document.getElementById('appContainer');
-  if (appContainer) appContainer.classList.remove('hidden');
-  
-  if (AppState.user) {
-      const nombreMostrar = AppState.user.nombre || AppState.user.usuario || 'Usuario';
-      const rolMostrar = AppState.user.rol || AppState.user.area || 'Supervisor';
-      
-      const txtUsuario = document.getElementById('txt-usuario-activo');
-      if (txtUsuario) {
-          txtUsuario.innerHTML = `<i class="ph ph-user-check"></i> ${nombreMostrar} | ${rolMostrar}`;
-      }
-      
-      // FIX: Uso de Optional Chaining para evitar el TypeError
-      const displayRole = document.getElementById('displayUserRole');
-      if (displayRole) displayRole.textContent = rolMostrar; 
+      const tx = this.db.transaction(store, "readwrite"); tx.objectStore(store).put(data); tx.oncomplete = resolve;
+    });
+  },
+  getAll(store) {
+    return new Promise((resolve) => {
+      if (this.useRAM) return resolve(this.ramDB[store]);
+      const tx = this.db.transaction(store, "readonly"); const req = tx.objectStore(store).getAll(); req.onsuccess = () => resolve(req.result);
+    });
+  },
+  delete(store, id) {
+    return new Promise((resolve) => {
+      if (this.useRAM) { this.ramDB[store] = this.ramDB[store].filter((i) => i.id !== id && i.key !== id); return resolve(); }
+      const tx = this.db.transaction(store, "readwrite"); tx.objectStore(store).delete(id); tx.oncomplete = resolve;
+    });
   }
+};
 
-  // REGLA: Ocultar Dashboard a roles operativos puros
-  const rolesPrivilegiados = ['JEFE', 'GERENTE', 'ADMINISTRADOR', 'CALIDAD'];
-  const rolUser = (AppState.user?.rol || '').toUpperCase();
-  const tabDash = document.getElementById('tabDashboard');
+window.refreshUI = async function () {
+  state.config = await POEDB.getAll("sys_config");
+  state.areas = await POEDB.getAll("areas"); 
+  const allPoes = await POEDB.getAll("poes");
+  const permisos = window.getPermisos();
+
+  state.poes = allPoes.filter((p) => {
+    const s = String(p.status || "").trim().toUpperCase();
+    const isActive = (s === "ACT" || s === "REV" || s === "ACTIVO" || s === "EN REVISION" || s === "EN REVISIÓN");
+    if (!isActive) return false;
+
+    if (permisos.isOperario) {
+        const areaDef = state.areas.find(a => a.areaAbbr === p.subCategory);
+        const catStr = areaDef ? String(areaDef.macroName + " " + areaDef.areaName).toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "") : "";
+        if (!catStr.includes(permisos.area)) return false; 
+    }
+    return true;
+  });
+
+  const btnNuevo = document.getElementById('btn-nuevo-poe');
+  const btnMapa = document.getElementById('btn-mapa-areas');
+  if (btnNuevo) btnNuevo.style.display = permisos.canEdit ? 'flex' : 'none';
+  if (btnMapa) btnMapa.style.display = permisos.canEdit ? 'flex' : 'none';
+
+  window.buildDynamicDictionaries();
+  window.renderPOEs();
+
+  const safeSet = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  safeSet("totalPOEs", state.poes.length);
+  safeSet("produccionCount", state.poes.filter((p) => p.category === "PROD").length);
+  safeSet("logisticaCount", state.poes.filter((p) => p.category === "LOG").length);
+  safeSet("calidadCount", state.poes.filter((p) => p.category === "CAL").length);
+};
+
+// 🆕 DICCIONARIOS BASADOS EN 8 COLUMNAS
+window.buildDynamicDictionaries = function () {
+  const selectCategory = document.getElementById("category");
+  if (!selectCategory || state.areas.length === 0) return;
+
+  const cv = selectCategory.value;
+  const macrosMap = new Map();
+  state.areas.forEach(a => macrosMap.set(a.macroAbbr, a.macroName));
+
+  let options = '<option value="" disabled selected>Seleccione Macro-Área...</option>';
+  for (let [abbr, name] of macrosMap.entries()) {
+      options += `<option value="${abbr}">${name}</option>`;
+  }
+  selectCategory.innerHTML = options;
+  if (cv) selectCategory.value = cv;
+};
+
+window.updateSubCategories = function () {
+  const catSelect = document.getElementById("category").value;
+  const subSelect = document.getElementById("poeSubCategory");
+  if (!subSelect) return;
+  subSelect.innerHTML = "";
+
+  const subs = state.areas.filter(a => a.macroAbbr === catSelect);
   
-  if (tabDash) {
-      if (rolesPrivilegiados.includes(rolUser)) {
-          tabDash.classList.remove('hidden');
+  if (subs.length > 0) {
+    subSelect.innerHTML = '<option value="" disabled selected>Seleccione Sub-Área...</option>' + 
+        subs.map((s) => `<option value="${s.areaAbbr}">${s.areaName}</option>`).join("");
+  } else {
+    subSelect.innerHTML = `<option value="GEN">General</option>`;
+  }
+  window.generatePoeCode();
+};
+
+window.generatePoeCode = function () {
+  if (state.form.editingId) return;
+  const cat = document.getElementById("category")?.value;
+  const sub = document.getElementById("poeSubCategory")?.value;
+  if (!cat || !sub) return;
+
+  const areaDef = state.areas.find(a => a.macroAbbr === cat && a.areaAbbr === sub);
+  const prefix = areaDef && areaDef.poePrefix ? areaDef.poePrefix : `${cat}-${sub}`;
+
+  const areaName = areaDef ? areaDef.areaName.toUpperCase() : '';
+  const isPOES = areaName.includes('SANEAMIENTO') || areaName.includes('LIMPIEZA') || areaName.includes('TÓXICO') || areaName.includes('TOXICO') || sub === 'SAN';
+  
+  const docType = isPOES ? 'POES' : 'POE';
+
+  const count = state.poes.filter((p) => p.category === cat && p.subCategory === sub).length;
+  const codeEl = document.getElementById("code");
+  if (codeEl) codeEl.value = `${docType}-${prefix}-${String(count + 1).padStart(3, "0")}`;
+
+  const modalTitle = document.getElementById("modalTitle");
+  if (modalTitle && !state.form.editingId) modalTitle.textContent = `Registrar ${docType} (GFSI)`;
+
+  // 🧪 Mostrar/Ocultar el Botón de Plantilla POES
+  const btnTemplate = document.getElementById("btnTemplatePOES");
+  if (btnTemplate) {
+      if (isPOES) {
+          btnTemplate.classList.remove('hidden');
+          btnTemplate.classList.add('flex');
       } else {
-          tabDash.classList.add('hidden'); 
+          btnTemplate.classList.add('hidden');
+          btnTemplate.classList.remove('flex');
       }
   }
+};
 
-  // PRE-CARGA EN SEGUNDO PLANO
-  if (!datosCargados && !isFetchingDashboard) {
-      setTimeout(() => {
-          cargarDatosDashboard();
-      }, 300); 
+window.renderPOEs = function () {
+  const tbody = document.getElementById("table-body");
+  if (!tbody) return;
+
+  const query = document.getElementById("searchInput")?.value.toLowerCase() || "";
+  const filtered = state.poes.filter((p) => {
+      const areaObj = state.areas.find(a => a.areaAbbr === p.subCategory);
+      const srch = p.code + p.title + (areaObj ? areaObj.areaName : p.subCategory);
+      return srch.toLowerCase().includes(query);
+  });
+  const permisos = window.getPermisos(); 
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="5" class="text-center p-6 text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700">Sin procedimientos disponibles.</td></tr>`;
+    return;
   }
-}
+
+  tbody.innerHTML = filtered.slice().reverse().map((poe) => {
+    const isPending = poe._syncStatus === "pending";
+    const badge = isPending
+      ? `<span class="bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-[10px] font-bold uppercase dark:bg-yellow-900/40 dark:text-yellow-300">En Cola</span>`
+      : `<span class="bg-green-100 text-green-800 px-2 py-1 rounded text-[10px] font-bold uppercase dark:bg-green-900/40 dark:text-green-300">En Nube</span>`;
+
+    const areaObj = state.areas.find((a) => a.areaAbbr === poe.subCategory);
+    const areaName = areaObj ? areaObj.areaName : poe.subCategory;
+
+    const actionButtons = permisos.canEdit ? `
+        <button type="button" onclick="window.editPOE('${poe.id}')" class="text-yellow-600 bg-yellow-50 dark:bg-yellow-900/20 dark:text-yellow-400 px-3 py-1.5 rounded font-semibold transition hover:bg-yellow-100 dark:hover:bg-yellow-900/40" title="Editar Documento">✏️</button>
+        <button type="button" onclick="window.deletePOE('${poe.id}')" class="text-red-600 bg-red-50 dark:bg-red-900/20 dark:text-red-400 px-3 py-1.5 rounded font-semibold transition hover:bg-red-100 dark:hover:bg-red-900/40" title="Marcar Obsoleto">✖</button>
+    ` : '';
+
+    return `
+    <tr class="border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors ${isPending ? "bg-yellow-50/30 dark:bg-yellow-900/10" : ""}">
+      <td class="p-4 text-xs font-bold text-blue-900 dark:text-blue-400">${poe.code}</td>
+      <td class="p-4 font-bold text-gray-800 dark:text-gray-200">${poe.title}</td>
+      <td class="p-4 text-xs font-bold text-gray-600 dark:text-gray-400">${areaName}</td>
+      <td class="p-4">${badge}</td>
+      <td class="p-4 text-right flex justify-end space-x-2">
+        <button type="button" onclick="window.viewPOE('${poe.id}')" class="text-blue-600 bg-blue-50 dark:bg-blue-900/20 dark:text-blue-400 px-3 py-1.5 rounded font-semibold transition hover:bg-blue-100 dark:hover:bg-blue-900/40" title="Ver Documento">👁️</button>
+        ${actionButtons}
+      </td>
+    </tr>`;
+  }).join("");
+};
 
 // ==========================================
-// MOTOR DUAL OFFLINE-FIRST (INDEXEDDB) & REFRESH MANAGER
+// 6. MAPA DE ÁREAS MOCKUP EXACTO
 // ==========================================
-const IDB_NAME = 'GenApps_DB_Residuos';
-const STORE_NAME = 'sync_queue';
-const IDB_VERSION = 1;
+window.setAreaFilter = function(macro) {
+    state.activeAreaFilter = macro;
+    window.renderMapaAreas();
+};
 
-// Wrapper asíncrono en O(1) para IndexedDB (Cero dependencias)
-const dbPromise = new Promise((resolve, reject) => {
-    const request = indexedDB.open(IDB_NAME, IDB_VERSION);
-    request.onerror = () => reject('Error al abrir IndexedDB');
-    request.onsuccess = (e) => resolve(e.target.result);
-    request.onupgradeneeded = (e) => {
-        const db = e.target.result;
-        if (!db.objectStoreNames.contains(STORE_NAME)) {
-            db.createObjectStore(STORE_NAME, { keyPath: '_localId' });
-        }
-    };
-});
+window.renderMapaAreas = function() {
+    const grid = document.getElementById('grid-areas');
+    const filterContainer = document.getElementById('area-filters');
+    if (!grid || !filterContainer) return;
 
-const dbUtil = {
-    async getAll() {
-        const db = await dbPromise;
-        return new Promise((resolve, reject) => {
-            const tx = db.transaction(STORE_NAME, 'readonly');
-            const req = tx.objectStore(STORE_NAME).getAll();
-            req.onsuccess = () => resolve(req.result);
-            req.onerror = () => reject(req.error);
+    // RENDERIZAR PÍLDORAS DINÁMICAS
+    const macrosMap = new Map();
+    state.areas.forEach(a => macrosMap.set(a.macroAbbr, a.macroName));
+    
+    const pillBase = "px-4 py-2 rounded-full text-xs font-semibold transition-all border outline-none";
+    const pillInact = "bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700";
+    
+    let filtersHTML = `<button onclick="window.setAreaFilter('TODAS')" class="${pillBase} ${state.activeAreaFilter === 'TODAS' ? 'bg-gray-900 text-white dark:bg-gray-200 dark:text-gray-900 border-transparent shadow' : pillInact}">Todas</button>`;
+    
+    for (let [abbr, name] of macrosMap.entries()) {
+        const isAct = abbr === state.activeAreaFilter;
+        let colorCls = isAct ? 'bg-gray-900 text-white dark:bg-gray-200 dark:text-gray-900 border-transparent shadow' : pillInact;
+        // Detalle Mockup: Producción se pone rojo
+        if(isAct && abbr === 'PROD') colorCls = 'bg-red-700 text-white border-red-800 shadow';
+
+        filtersHTML += `<button onclick="window.setAreaFilter('${abbr}')" class="${pillBase} ${colorCls}">${name}</button>`;
+    }
+    filterContainer.innerHTML = filtersHTML;
+
+    // RENDERIZAR TARJETAS AGRUPADAS
+    let areasToRender = state.activeAreaFilter === 'TODAS' ? state.areas : state.areas.filter(a => a.macroAbbr === state.activeAreaFilter);
+    
+    const groups = {};
+    areasToRender.forEach(a => {
+        if(!groups[a.macroName]) groups[a.macroName] = [];
+        groups[a.macroName].push(a);
+    });
+
+    let gridHTML = '';
+    for (let macro in groups) {
+        gridHTML += `
+        <div class="col-span-full mt-8 mb-2 flex items-center gap-2">
+            <div class="w-3 h-3 rounded-full bg-red-600 shadow-sm"></div>
+            <h3 class="text-xl font-bold text-gray-900 dark:text-white">${macro} <span class="text-sm font-normal text-gray-400 ml-1">(${groups[macro].length} areas)</span></h3>
+        </div>
+        `;
+        groups[macro].forEach(area => {
+            gridHTML += `
+            <div class="bg-white dark:bg-gray-800 rounded-xl p-5 border border-gray-200 dark:border-gray-700 shadow-sm hover:shadow-md transition-shadow flex gap-4 cursor-pointer" onclick="window.closeAreasModal(); document.getElementById('searchInput').value = '${area.areaName}'; window.refreshUI();">
+                <div class="flex-shrink-0 mt-1 text-red-500 dark:text-red-400">
+                    <div class="w-10 h-10 rounded-full bg-red-50 dark:bg-red-900/20 flex items-center justify-center border border-red-100 dark:border-red-900/50">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                    </div>
+                </div>
+                <div>
+                    <h4 class="font-bold text-gray-900 dark:text-white text-base leading-tight">${area.areaName}</h4>
+                    <p class="text-xs text-gray-500 dark:text-gray-400 font-mono mt-1 mb-2 tracking-wide">${area.poePrefix}-XXX</p>
+                    <p class="text-xs text-gray-600 dark:text-gray-400 leading-relaxed line-clamp-2">${area.desc || 'Sin descripción detallada.'}</p>
+                </div>
+            </div>
+            `;
         });
-    },
-    async put(item) {
-        const db = await dbPromise;
-        return new Promise((resolve, reject) => {
-            const tx = db.transaction(STORE_NAME, 'readwrite');
-            const req = tx.objectStore(STORE_NAME).put(item);
-            req.onsuccess = () => resolve(req.result);
-            req.onerror = () => reject(req.error);
-        });
-    },
-    async delete(key) {
-        const db = await dbPromise;
-        return new Promise((resolve, reject) => {
-            const tx = db.transaction(STORE_NAME, 'readwrite');
-            const req = tx.objectStore(STORE_NAME).delete(key);
-            req.onsuccess = () => resolve();
-            req.onerror = () => reject(req.error);
-        });
+    }
+    
+    if (areasToRender.length === 0) {
+        grid.innerHTML = `<div class="col-span-full py-20 text-center border-2 border-dashed border-gray-300 dark:border-gray-700 rounded-2xl text-gray-400 dark:text-gray-500">No hay áreas operativas.</div>`;
+    } else {
+        grid.innerHTML = gridHTML;
     }
 };
 
-const SyncManager = {
-    isSyncing: false,
-    
-    // Ahora devuelve una Promesa
-    async getQueue() {
-        try {
-            return await dbUtil.getAll();
-        } catch (e) {
-            console.error("Error leyendo IndexedDB:", e);
-            return [];
-        }
-    },
-    
-    // Inserción asíncrona sin bloquear el DOM
-    async enqueue(record) {
-        record._localId = Date.now().toString(); 
-        await dbUtil.put(record);
-        await this.updateBadge();
-    },
-    
-    async remove(localId) {
-        await dbUtil.delete(localId);
-    },
-    
-    async sync(forcePull = false) {
-        if (!navigator.onLine || this.isSyncing) return;
-        
-        const queue = await this.getQueue();
-        
-        if (queue.length === 0 && !forcePull) {
-            this.updateBadge();
-            return;
-        }
+window.openAreasModal = function () {
+    const m = document.getElementById("areasModal");
+    if (m) {
+        m.classList.remove("hidden");
+        m.classList.add("flex");
+        window.setAreaFilter('TODAS'); 
+    }
+};
+window.closeAreasModal = function () {
+    const m = document.getElementById("areasModal");
+    if (m) { m.classList.add("hidden"); m.classList.remove("flex"); }
+};
 
-        this.isSyncing = true; 
-        
-        // UI: Configurar estado de carga
-        const badge = document.getElementById('syncStatusBadge');
-        const badgeText = document.getElementById('syncStatusText');
-        const badgeIcon = document.getElementById('syncStatusIcon');
-        const btnForce = document.getElementById('btnForceSync');
-        const iconForce = document.getElementById('iconForceSync');
-        
-        if (badge) badge.classList.remove('hidden');
-        if (badgeIcon) badgeIcon.className = 'ph-fill ph-arrows-clockwise text-blue-400 animate-spin inline-block text-xl';
-        
-        if (btnForce) {
-            btnForce.disabled = true;
-            iconForce.classList.add('animate-spin');
-        }
+// --------------------------------------------------------
+// LÓGICA DE FORMULARIO DE ÁREAS (CRUD DINÁMICO)
+// --------------------------------------------------------
 
-        let hasErrors = false;
+window.toggleNewMacroFields = function() {
+    const val = document.getElementById("cfgAreaMacro").value;
+    const container = document.getElementById("newMacroContainer");
+    const inName = document.getElementById("cfgNewMacroName");
+    const inAbbr = document.getElementById("cfgNewMacroAbbr");
 
-        // FASE 1: PUSH (Subir a GAS)
-        if (queue.length > 0) {
-            if (badgeText) badgeText.textContent = `Subiendo ${queue.length} registro(s)...`;
-            for (const record of queue) {
-                try {
-                    const payload = { ...record };
-                    delete payload._localId; 
-                    
-                    const response = await fetch(SCRIPT_URL, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                        body: JSON.stringify(payload)
-                    });
-                    
-                    const res = await response.json();
-                    if (res.status === 'success') {
-                        await this.remove(record._localId); // Borrado en DB
-                        const localTag = document.getElementById(`sync-tag-${record._localId}`);
-                        if (localTag) localTag.innerHTML = '<i class="ph-fill ph-cloud-check text-green-500" title="Sincronizado"></i>';
-                    } else {
-                        hasErrors = true;
-                    }
-                } catch (e) {
-                    hasErrors = true;
-                    break; 
-                }
+    if (val === 'NEW') {
+        container.classList.remove('hidden');
+        inName.setAttribute('required', 'true');
+        inAbbr.setAttribute('required', 'true');
+        inName.focus();
+    } else {
+        container.classList.add('hidden');
+        inName.removeAttribute('required');
+        inAbbr.removeAttribute('required');
+    }
+};
+
+window.autoCalcPrefix = function() {
+    const macroSel = document.getElementById("cfgAreaMacro").value;
+    let macroAbbr = "";
+    
+    // Extraer la abreviatura de la Macro elegida o la nueva escrita
+    if (macroSel === 'NEW') {
+        macroAbbr = document.getElementById("cfgNewMacroAbbr").value.trim().toUpperCase();
+    } else if (macroSel) {
+        macroAbbr = macroSel.split('|')[0];
+    }
+    
+    const areaAbbr = document.getElementById("cfgAreaAbbr").value.trim().toUpperCase();
+    
+    // Si tenemos ambas, calculamos el prefijo final dinámicamente
+    if (macroAbbr && areaAbbr) {
+        document.getElementById("cfgAreaPrefix").value = `${macroAbbr}-${areaAbbr}`;
+    }
+};
+
+window.openAreaForm = function(id = null) {
+    const m = document.getElementById("areaFormModal");
+    const form = document.getElementById("area-config-form");
+    if (!m || !form) return;
+    
+    form.reset();
+    state.form.editingAreaId = id;
+    document.getElementById("areaFormTitle").textContent = id ? "Editar Área Operativa" : "Registrar Nueva Área";
+
+    // 1. Cargar Macro-Áreas dinámicas de la BD
+    const macroSelect = document.getElementById("cfgAreaMacro");
+    const macrosMap = new Map();
+    state.areas.forEach(a => macrosMap.set(a.macroAbbr, a.macroName));
+
+    let options = '<option value="" disabled selected>Seleccione Macro-Área...</option>';
+    for (let [abbr, name] of macrosMap.entries()) {
+        options += `<option value="${abbr}|${name}">${name} (${abbr})</option>`;
+    }
+    options += '<option value="NEW" class="font-bold text-blue-600 dark:text-blue-400">✨ CREAR NUEVA MACRO-ÁREA...</option>';
+    macroSelect.innerHTML = options;
+
+    window.toggleNewMacroFields(); // Ocultar campos nuevos por defecto
+
+    // 2. Cargar datos si es edición
+    if (id) {
+        const area = state.areas.find(a => a.id === id);
+        if (area) {
+            const macroVal = `${area.macroAbbr}|${area.macroName}`;
+            
+            // Si la macro existe en el select, la marcamos. Si no, forzamos creación.
+            const optionExists = Array.from(macroSelect.options).some(opt => opt.value === macroVal);
+            if (optionExists) {
+                macroSelect.value = macroVal;
+            } else {
+                macroSelect.value = 'NEW';
+                window.toggleNewMacroFields();
+                document.getElementById("cfgNewMacroName").value = area.macroName;
+                document.getElementById("cfgNewMacroAbbr").value = area.macroAbbr;
             }
-        }
 
-        // FASE 2: PULL (Refrescar Dashboard)
-        if (!hasErrors && (forcePull || queue.length > 0)) {
-            if (badgeText) badgeText.textContent = 'Actualizando panel...';
-            try {
-                datosCargados = false; 
-                isFetchingDashboard = false; 
-                await cargarDatosDashboard(forcePull); 
-            } catch (e) {
-                hasErrors = true;
-            }
+            document.getElementById("cfgAreaName").value = area.areaName;
+            document.getElementById("cfgAreaAbbr").value = area.areaAbbr;
+            document.getElementById("cfgAreaPrefix").value = area.poePrefix;
+            document.getElementById("cfgAreaDesc").value = area.desc;
+            document.getElementById("cfgAreaStatus").value = area.status || 'ACT';
         }
+    }
 
-        // Restaurar UI
-        if (badgeIcon) badgeIcon.classList.remove('animate-spin');
-        if (iconForce) iconForce.classList.remove('animate-spin');
-        if (btnForce) btnForce.disabled = false;
-        
-        const remainingQueue = await this.getQueue();
-        
-        if (!hasErrors && remainingQueue.length === 0) {
-            if (badgeIcon) badgeIcon.className = 'ph-fill ph-check-circle text-green-400 text-xl';
-            if (badgeText) badgeText.textContent = '¡Datos actualizados!';
-            setTimeout(() => { if(badge) badge.classList.add('hidden'); }, 3500);
-        } else {
-            if (badgeIcon) badgeIcon.className = 'ph-fill ph-warning-circle text-yellow-400 text-xl';
-            if (badgeText) badgeText.textContent = 'Red inestable. Reintentaremos luego.';
-            setTimeout(() => this.updateBadge(), 4000);
-        }
-        
-        this.isSyncing = false;
-        this.updateBadge(); 
-    },
+    m.classList.remove("hidden");
+    m.classList.add("flex");
+};
+
+window.closeAreaForm = function() {
+    const m = document.getElementById("areaFormModal");
+    if (m) { m.classList.add("hidden"); m.classList.remove("flex"); }
+};
+
+window.handleAreaSubmit = async function(e) {
+    e.preventDefault();
+    if (!state.isSessionVerified || !state.user) return alert("Acción bloqueada: Esperando autorización del HUB.");
+    if (!window.getPermisos().canEdit) return alert("Acción denegada. Rol insuficiente.");
+
+    const btn = document.getElementById('btnSaveArea');
+    const origHTML = btn.innerHTML;
+    btn.disabled = true; 
+    btn.innerHTML = `<svg class="w-4 h-4 animate-spin inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> Guardando...`;
+
+    const isEditing = !!state.form.editingAreaId;
+    const id = isEditing ? state.form.editingAreaId : `AREA-${Date.now()}`;
     
-    async updateBadge() {
-        const queue = await this.getQueue();
-        const badge = document.getElementById('syncStatusBadge');
-        const badgeText = document.getElementById('syncStatusText');
-        const badgeIcon = document.getElementById('syncStatusIcon');
-        
-        const btnForce = document.getElementById('btnForceSync');
-        const countForce = document.getElementById('countForceSync');
-        const txtForce = document.getElementById('txtForceSync');
-        
-        if (!badge || !badgeIcon) return; // Defensive programming
+    let macroName, macroAbbr;
+    const macroSel = document.getElementById("cfgAreaMacro").value;
+    
+    // Validar de dónde sacamos la Macro (Del Select o de los inputs nuevos)
+    if (macroSel === 'NEW') {
+        macroName = document.getElementById("cfgNewMacroName").value.trim();
+        macroAbbr = document.getElementById("cfgNewMacroAbbr").value.trim().toUpperCase();
+    } else {
+        const parts = macroSel.split('|');
+        macroAbbr = parts[0];
+        macroName = parts[1];
+    }
 
-        if (queue.length > 0) {
-            if (!this.isSyncing) {
-                badge.classList.remove('hidden');
-                badgeIcon.className = 'ph-fill ph-cloud-slash text-yellow-400 text-xl';
-                if (badgeText) badgeText.textContent = `${queue.length} registro(s) pendiente(s)`;
+    const payload = {
+        action: 'save_area',
+        id: id,
+        macroName: macroName,
+        macroAbbr: macroAbbr,
+        areaName: document.getElementById("cfgAreaName").value.trim(),
+        areaAbbr: document.getElementById("cfgAreaAbbr").value.trim().toUpperCase(),
+        poePrefix: document.getElementById("cfgAreaPrefix").value.trim().toUpperCase(),
+        desc: document.getElementById("cfgAreaDesc").value.trim(),
+        status: document.getElementById("cfgAreaStatus").value
+    };
+
+    try {
+        const res = await fetch(GAS_DICT_ENDPOINT, { method: "POST", body: JSON.stringify(payload) });
+        const r = await res.json();
+        
+        if (r.status === 'success') {
+            if (payload.status === 'OBS') {
+                state.areas = state.areas.filter(a => a.id !== id);
+                await POEDB.delete("areas", id);
+            } else {
+                const idx = state.areas.findIndex(a => a.id === id);
+                if(idx > -1) state.areas[idx] = payload; else state.areas.push(payload);
+                await POEDB.save("areas", payload);
             }
             
-            if (btnForce) {
-                btnForce.className = 'flex bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-700/50 px-3 py-1.5 rounded-lg items-center gap-2 text-sm font-medium transition-all shadow-sm hover:bg-amber-100 dark:hover:bg-amber-900/50';
-                if (txtForce) txtForce.textContent = "Sincronizar";
-                if (countForce) {
-                    countForce.classList.remove('hidden');
-                    countForce.textContent = queue.length;
-                }
-            }
+            window.closeAreaForm();
+            window.renderMapaAreas(); // 🔄 Refrescar tarjetas de áreas y filtros
+            window.refreshUI();       // 🔄 Refrescar los selectores del POE principal
         } else {
-            if (!badgeIcon.classList.contains('animate-spin') && badgeText && !badgeText.textContent.includes('actualizados')) {
-                 badge.classList.add('hidden');
-            }
-            if (btnForce && !this.isSyncing) {
-                btnForce.className = 'flex bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700 px-3 py-1.5 rounded-lg items-center gap-2 text-sm font-medium transition-all shadow-sm hover:bg-gray-100 dark:hover:bg-gray-700/80';
-                if (txtForce) txtForce.textContent = "Actualizar";
-                if (countForce) countForce.classList.add('hidden');
-            }
+            alert("Error del Servidor: " + r.message);
         }
-    }
-};
-
-
-// ==========================================
-// TRIGGERS DE SINCRONIZACIÓN (BLINDAJE TRIPLE)
-// ==========================================
-window.addEventListener('online', () => SyncManager.sync(false));
-window.addEventListener('offline', () => SyncManager.updateBadge());
-
-document.addEventListener('DOMContentLoaded', () => {
-    const btnForce = document.getElementById('btnForceSync');
-    if(btnForce) {
-        btnForce.addEventListener('click', () => SyncManager.sync(true));
-    }
-    // Inicializar el badge en la carga de la página
-    SyncManager.updateBadge();
-});
-
-// Polling asíncrono
-setInterval(async () => {
-    if (navigator.onLine && !SyncManager.isSyncing) {
-        const queue = await SyncManager.getQueue();
-        if (queue.length > 0) {
-            SyncManager.sync(false);
-        }
-    }
-}, 20000);
-
-// ==========================================
-// UTILIDADES DE EXTRACCIÓN Y FORMATO 
-// ==========================================
-function formatearFechaEstandar(fechaStr) {
-  if (!fechaStr || fechaStr === '-') return '-';
-  if (fechaStr.includes('T')) fechaStr = fechaStr.split('T')[0];
-  const partes = fechaStr.split(/[-/]/);
-  if (partes.length === 3) {
-    if (partes[0].length === 4) return `${partes[2]}/${partes[1]}/${partes[0]}`;
-    return `${partes[0].padStart(2, '0')}/${partes[1].padStart(2, '0')}/${partes[2]}`;
-  }
-  return fechaStr;
-}
-
-function formatearHora24(horaStr) {
-  if (!horaStr || horaStr === '-') return '-';
-  horaStr = String(horaStr).trim();
-  const lowerHora = horaStr.toLowerCase();
-  const isPM = lowerHora.includes('pm');
-  const isAM = lowerHora.includes('am');
-  
-  let timeStr = lowerHora.replace(/[a-z]/ig, '').trim(); 
-  let partes = timeStr.split(':');
-  
-  if (partes.length >= 2) {
-    let h = parseInt(partes[0], 10);
-    const m = partes[1].padStart(2, '0');
-    const s = (partes[2] || '00').replace(/[^0-9]/g, '').padStart(2, '0');
-    
-    if (isNaN(h)) return horaStr;
-    if (isPM && h < 12) h += 12;
-    if (isAM && h === 12) h = 0;
-    
-    return `${String(h).padStart(2, '0')}:${m}:${s}`;
-  }
-  return horaStr;
-}
-
-function obtenerUrlImagen(reg) {
-  if (!reg) return '';
-  if (reg['IMAGEN']) return String(reg['IMAGEN']);
-  if (reg['Imagen']) return String(reg['Imagen']);
-  if (reg['imagen']) return String(reg['imagen']);
-  
-  for (const key in reg) {
-    const kLower = key.toLowerCase();
-    if (kLower.includes('imagen') || kLower.includes('foto') || kLower.includes('link') || kLower.includes('url')) {
-       const val = reg[key];
-       if (val && String(val).trim() !== '') {
-           return String(val);
-       }
-    }
-  }
-  return '';
-}
-
-function obtenerObservaciones(reg) {
-  if (!reg) return '';
-  if (reg['OBSERVACIONES:'] !== undefined) return reg['OBSERVACIONES:'];
-  if (reg['OBSERVACIONES'] !== undefined) return reg['OBSERVACIONES'];
-  if (reg['observaciones:'] !== undefined) return reg['observaciones:'];
-  if (reg['observaciones'] !== undefined) return reg['observaciones'];
-  if (reg['Observaciones'] !== undefined) return reg['Observaciones'];
-
-  for (const key in reg) {
-    const kLower = key.toLowerCase();
-    if (kLower.includes('observacion') || kLower.includes('detalle') || kLower.includes('comentario')) {
-       return reg[key] || '';
-    }
-  }
-  return '';
-}
-
-function actualizarTimestamp() {
-  const now = new Date();
-  
-  // Formato ISO para el input type="date" (YYYY-MM-DD)
-  const day = String(now.getDate()).padStart(2, '0');
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const year = now.getFullYear();
-  const dateStr = `${year}-${month}-${day}`;
-  
-  // Formato para el input type="time" (HH:MM:SS)
-  const hours = String(now.getHours()).padStart(2, '0');
-  const minutes = String(now.getMinutes()).padStart(2, '0');
-  const seconds = String(now.getSeconds()).padStart(2, '0');
-  const timeStr = `${hours}:${minutes}:${seconds}`;
-  
-  const inputFecha = document.getElementById('fechaRegistro');
-  const inputHora = document.getElementById('horaRegistro');
-  
-  if (inputFecha) inputFecha.value = dateStr;
-  if (inputHora) inputHora.value = timeStr;
-}
-
-function inicializarFiltrosFechas() {
-  const tzoffset = (new Date()).getTimezoneOffset() * 60000;
-  const localISOTime = (new Date(Date.now() - tzoffset)).toISOString().split('T')[0];
-  
-  document.getElementById('filtroFechaInicio').value = localISOTime;
-  document.getElementById('filtroFechaFin').value = localISOTime;
-
-  document.getElementById('filtroFechaInicio').addEventListener('blur', cargarDatosDashboard);
-  document.getElementById('filtroFechaFin').addEventListener('blur', cargarDatosDashboard);
-  document.getElementById('filtroFechaInicio').addEventListener('keydown', cargarDatosDashboard);
-  document.getElementById('filtroFechaFin').addEventListener('keydown', cargarDatosDashboard);
-  document.getElementById('filtroArea').addEventListener('change', aplicarFiltros);
-  document.getElementById('filtroTipo').addEventListener('change', aplicarFiltros);
-}
-
-
-// ==========================================
-// NAVEGACIÓN (TABS)
-// ==========================================
-const tabs = {
-  registro: { btn: document.getElementById('tabRegistro'), vista: document.getElementById('vistaRegistro') },
-  revision: { btn: document.getElementById('tabRevision'), vista: document.getElementById('vistaRevision') },
-  dashboard: { btn: document.getElementById('tabDashboard'), vista: document.getElementById('vistaDashboard') }
-};
-
-function cambiarVista(vistaActiva) {
-  Object.values(tabs).forEach(tab => {
-    tab.btn.classList.remove('text-green-600', 'dark:text-green-400', 'border-b-2', 'border-green-600', 'dark:border-green-400');
-    tab.btn.classList.add('text-gray-500', 'dark:text-gray-400');
-    tab.vista.classList.add('hidden');
-  });
-
-  tabs[vistaActiva].btn.classList.add('text-green-600', 'dark:text-green-400', 'border-b-2', 'border-green-600', 'dark:border-green-400');
-  tabs[vistaActiva].btn.classList.remove('text-gray-500', 'dark:text-gray-400');
-  tabs[vistaActiva].vista.classList.remove('hidden');
-}
-
-tabs.registro.btn.addEventListener('click', () => cambiarVista('registro'));
-
-tabs.revision.btn.addEventListener('click', async () => {
-  cambiarVista('revision');
-  if (!datosCargados) {
-    await cargarDatosDashboard();
-  } else {
-    // Si ya cargaron de fondo, simplemente inyectamos a la tabla
-    renderizarMisRegistros();
-  }
-});
-
-tabs.dashboard.btn.addEventListener('click', () => {
-  cambiarVista('dashboard');
-  if (!datosCargados) {
-    cargarDatosDashboard();
-  } else {
-    aplicarFiltros(); 
-    // FIX: Obligamos a revelar el contenedor que fue cargado en segundo plano
-    const dashContent = document.getElementById('dashboardContent');
-    if(dashContent) dashContent.classList.remove('hidden');
-  }
-});
-
-// ==========================================
-// LOGICA DEL DASHBOARD Y OBTENCIÓN DE DATOS
-// ==========================================
-// FIX: Aceptamos boolean (true) desde el botón, o el evento nativo si es un input
-async function cargarDatosDashboard(eventOrForce) {
-  let isForced = false;
-  
-  if (eventOrForce === true) {
-      isForced = true;
-  } else if (eventOrForce && eventOrForce.type === 'keydown') {
-      if (eventOrForce.key !== 'Enter') return; 
-      if (document.activeElement) document.activeElement.blur();
-  }
-
-  // Seguro anti-colisiones
-  if (isFetchingDashboard) return;
-
-  const fInicioStr = document.getElementById('filtroFechaInicio').value;
-  const fFinStr = document.getElementById('filtroFechaFin').value;
-
-  if (!fInicioStr || !fFinStr) return;
-
-  const extraerAnio = (fecha) => {
-    const match = fecha.match(/\d{4}/);
-    return match ? parseInt(match[0], 10) : 0;
-  };
-
-  const yearInicio = extraerAnio(fInicioStr);
-  const yearFin = extraerAnio(fFinStr);
-
-  if (yearInicio < 2000 || yearInicio > 2100) return; 
-  if (yearFin < 2000 || yearFin > 2100) return; 
-
-  const containerLoadingDash = document.getElementById('dashboardLoading');
-  const containerContentDash = document.getElementById('dashboardContent');
-  
-  const containerLoadingRev = document.getElementById('revisionLoading');
-  const containerContentRev = document.getElementById('revisionContent');
-  const emptyStateRev = document.getElementById('emptyRevisionState');
-
-  const isRevActive = !document.getElementById('vistaRevision').classList.contains('hidden');
-  const isDashActive = !document.getElementById('vistaDashboard').classList.contains('hidden');
-
-  if (isRevActive) {
-      if (containerContentRev) containerContentRev.classList.add('hidden');
-      if (emptyStateRev) emptyStateRev.classList.add('hidden');
-      if (containerLoadingRev) containerLoadingRev.classList.remove('hidden');
-  } else if (isDashActive) {
-      if (containerContentDash) containerContentDash.classList.add('hidden');
-      if (containerLoadingDash) containerLoadingDash.classList.remove('hidden');
-  }
-
-  isFetchingDashboard = true; 
-
-  try {
-    const [response] = await Promise.all([
-      fetch(SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ 
-          action: 'getDatos',
-          fechaInicio: fInicioStr, 
-          fechaFin: fFinStr,
-          forceRefresh: isForced // FIX: Le avisamos al Backend que destruya la caché
-        })
-      }),
-      new Promise(resolve => setTimeout(resolve, 600))
-    ]);
-    
-    const result = await response.json();
-    if (result.status === 'success') {
-      todosLosRegistros = result.data; 
-      datosCargados = true;
-      
-      if (isRevActive) renderizarMisRegistros(); 
-      if (isDashActive) aplicarFiltros(); 
-      
-    } else {
-      throw new Error(result.message || "Error al obtener datos");
-    }
-  } catch (error) {
-    console.error("Error Dashboard:", error);
-    if (isDashActive || isRevActive) alert("No se pudieron cargar los datos. Verifica tu red.");
-  } finally {
-    isFetchingDashboard = false; 
-    
-    if (containerLoadingRev) containerLoadingRev.classList.add('hidden');
-    if (containerLoadingDash) containerLoadingDash.classList.add('hidden');
-    
-    if (containerContentDash) containerContentDash.classList.remove('hidden');
-  }
-}
-
-
-function aplicarFiltros() {
-  if (!datosCargados) return;
-
-  const filtroArea = document.getElementById('filtroArea').value;
-  const filtroTipo = document.getElementById('filtroTipo').value;
-
-  const registrosFiltrados = todosLosRegistros.filter(reg => {
-    const rArea = reg.area || reg.AREA;
-    const rTipo = reg.tipo || reg.TIPO;
-    
-    if (filtroArea !== 'TODAS' && rArea !== filtroArea) return false;
-    if (filtroTipo !== 'TODOS' && rTipo !== filtroTipo) return false;
-    
-    return true; 
-  });
-
-  registrosFiltradosActuales = registrosFiltrados; 
-  procesarDatosParaGraficos(registrosFiltrados);
-}
-
-function procesarDatosParaGraficos(registros) {
-  let totalPeso = 0;
-  let totalBolsas = 0;
-  let areasAgrupadas = {};
-  let tiposAgrupados = {};
-
-  registros.forEach(reg => {
-    const rPeso = Number(reg.peso || reg.PESO) || 0;
-    const rBolsas = Number(reg.bolsas || reg['BOLSAS USADAS'] || reg.BOLSAS_USADAS) || 0;
-    const rArea = reg.area || reg.AREA;
-    const rTipo = reg.tipo || reg.TIPO;
-    
-    totalPeso += rPeso;
-    totalBolsas += rBolsas;
-
-    if (areasAgrupadas[rArea]) areasAgrupadas[rArea] += rPeso;
-    else areasAgrupadas[rArea] = rPeso;
-
-    if (tiposAgrupados[rTipo]) tiposAgrupados[rTipo] += rPeso;
-    else tiposAgrupados[rTipo] = rPeso;
-  });
-
-  const areasKeys = Object.keys(areasAgrupadas).filter(k => areasAgrupadas[k] > 0).sort((a,b) => areasAgrupadas[b] - areasAgrupadas[a]);
-  const areasValues = areasKeys.map(k => areasAgrupadas[k].toFixed(2));
-  const areasLabelsMulti = areasKeys.map((k, i) => [k, `${areasValues[i]} kg`]);
-
-  const tiposKeys = Object.keys(tiposAgrupados).filter(k => tiposAgrupados[k] > 0);
-  const tiposValues = tiposKeys.map(k => tiposAgrupados[k].toFixed(2));
-  const tiposLabelsMulti = tiposKeys.map((k, i) => `${k}: ${tiposValues[i]} kg`);
-
-  document.getElementById('kpiPeso').textContent = totalPeso.toFixed(2) + ' kg';
-  document.getElementById('kpiBolsas').textContent = totalBolsas;
-  document.getElementById('kpiRegistros').textContent = registros.length;
-
-  dibujarGraficoAreas(areasLabelsMulti, areasValues);
-  dibujarGraficoTipos(tiposLabelsMulti, tiposValues);
-}
-
-Chart.defaults.font.family = 'sans-serif';
-
-function dibujarGraficoAreas(labels, data) {
-  const ctx = document.getElementById('chartArea').getContext('2d');
-  if (chartAreaInstancia) chartAreaInstancia.destroy();
-  
-  const isDark = document.documentElement.classList.contains('dark');
-  const textColor = isDark ? '#cbd5e1' : '#475569';
-
-  chartAreaInstancia = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels: labels,
-      datasets: [{
-        label: 'Kg de Residuos',
-        data: data,
-        backgroundColor: 'rgba(34, 197, 94, 0.8)',
-        borderColor: 'rgb(22, 163, 74)',
-        borderWidth: 1,
-        borderRadius: 4
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: { 
-        y: { beginAtZero: true, ticks: {color: textColor} },
-        x: { ticks: { font: { weight: '600' }, color: textColor } }
-      },
-      animation: false
-    }
-  });
-}
-
-function dibujarGraficoTipos(labels, data) {
-  const ctx = document.getElementById('chartTipo').getContext('2d');
-  if (chartTipoInstancia) chartTipoInstancia.destroy();
-  
-  const isDark = document.documentElement.classList.contains('dark');
-  const textColor = isDark ? '#cbd5e1' : '#475569';
-
-  const coloresTipos = labels.map(tipo => {
-    if(tipo.includes('Organico') || tipo.includes('ORGANICO')) return '#22c55e'; 
-    if(tipo.includes('Plastico') || tipo.includes('PLASTICO')) return '#3b82f6'; 
-    if(tipo.includes('Carton') || tipo.includes('CARTON')) return '#eab308'; 
-    return '#6b7280'; 
-  });
-
-  chartTipoInstancia = new Chart(ctx, {
-    type: 'doughnut',
-    data: {
-      labels: labels,
-      datasets: [{
-        data: data,
-        backgroundColor: coloresTipos,
-        borderWidth: isDark ? 0 : 2,
-        hoverOffset: 4
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: { legend: { position: 'bottom', labels: { color: textColor} } },
-      animation: false
-    }
-  });
-}
-
-// ==========================================
-// EXPORTAR E IMPRIMIR REPORTE
-// ==========================================
-document.getElementById('btnExportarExcel').addEventListener('click', () => {
-  if (registrosFiltradosActuales.length === 0) {
-    alert("No hay registros para exportar con los filtros actuales.");
-    return;
-  }
-
-  const datosExcel = registrosFiltradosActuales.map(reg => {
-    return {
-      'Fecha': formatearFechaEstandar(reg.fecha || reg.FECHA),
-      'Hora': formatearHora24(reg.hora || reg.HORA),
-      'Supervisor': reg.supervisor || reg.SUPERVISOR || '-',
-      'Área': reg.area || reg.AREA || '-',
-      'Tipo de Residuo': reg.tipo || reg.TIPO || '-',
-      'Peso (Kg)': reg.peso || reg.PESO || 0,
-      'Bolsas Utilizadas': reg.bolsas || reg['BOLSAS USADAS'] || reg.BOLSAS_USADAS || 0,
-      'Observaciones': obtenerObservaciones(reg) || '',
-      'Imagen (Link)': obtenerUrlImagen(reg) || 'Sin Imagen'
-    };
-  });
-
-  const worksheet = XLSX.utils.json_to_sheet(datosExcel);
-  const workbook = XLSX.utils.book_new();
-
-  worksheet['!cols'] = [
-    {wch: 12}, {wch: 10}, {wch: 30}, {wch: 20}, {wch: 20},
-    {wch: 12}, {wch: 15}, {wch: 40}, {wch: 50}
-  ];
-
-  XLSX.utils.book_append_sheet(workbook, worksheet, "Residuos");
-  XLSX.writeFile(workbook, `Reporte_Residuos_${new Date().toISOString().split('T')[0]}.xlsx`);
-});
-
-document.getElementById('btnPrint').addEventListener('click', () => {
-  const selArea = document.getElementById('filtroArea');
-  const selTipo = document.getElementById('filtroTipo');
-
-  document.getElementById('printFInicio').textContent = document.getElementById('filtroFechaInicio').value;
-  document.getElementById('printFFin').textContent = document.getElementById('filtroFechaFin').value;
-  document.getElementById('printFArea').textContent = selArea.options[selArea.selectedIndex].text;
-  document.getElementById('printFTipo').textContent = selTipo.options[selTipo.selectedIndex].text;
-  
-  const nombreAutor = AppState.user ? (AppState.user.nombre || AppState.user.usuario) : "Supervisor";
-  document.getElementById('printFirmaNombre').textContent = nombreAutor;
-
-  window.print();
-});
-
-// ==========================================
-// LÓGICA DE LA VISTA: MIS REGISTROS (EDICIÓN)
-// ==========================================
-function renderizarMisRegistros() {
-  const tbody = document.getElementById('tablaMisRegistros');
-  const emptyState = document.getElementById('emptyRevisionState');
-  const revContent = document.getElementById('revisionContent'); // NUEVO
-  
-  if (!tbody || !emptyState) return;
-  tbody.innerHTML = '';
-  
-  if(!AppState.user) return;
-
-  const misRegistros = todosLosRegistros.filter(r => {
-    const autorEmail = String(r.email || r.supervisor).trim().toLowerCase();
-    const sesionEmail = String(AppState.user.email || AppState.user.usuario).trim().toLowerCase();
-    const sesionNombre = String(AppState.user.nombre).trim().toLowerCase();
-    return autorEmail === sesionEmail || autorEmail === sesionNombre;
-  });
-  
-  if (misRegistros.length === 0) {
-    emptyState.classList.remove('hidden');
-    if (revContent) revContent.classList.add('hidden'); // Ocultar tabla si no hay nada
-    return;
-  }
-  
-  emptyState.classList.add('hidden');
-  if (revContent) revContent.classList.remove('hidden'); // Mostrar tabla si hay datos
-  
-  misRegistros.sort((a, b) => Number(b.id) - Number(a.id));
-  
-  // (El resto del forEach() se mantiene exactamente igual...)
-  misRegistros.forEach(reg => {
-    let colorTipo = "bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200";
-    const tipo = String(reg.tipo || reg.TIPO || '');
-    if(tipo.includes("Organico")) colorTipo = "bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-400";
-    else if(tipo.includes("Plastico")) colorTipo = "bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-400";
-    else if(tipo.includes("Carton")) colorTipo = "bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-400";
-    
-    const tr = document.createElement('tr');
-    tr.className = "hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors";
-    tr.innerHTML = `
-      <td class="px-4 py-3 whitespace-nowrap border-b dark:border-gray-700">
-        <div class="font-medium text-gray-900 dark:text-gray-100">${formatearFechaEstandar(reg.fecha || reg.FECHA)}</div>
-        <div class="text-xs text-gray-500 dark:text-gray-400">${formatearHora24(reg.hora || reg.HORA)}</div>
-      </td>
-      <td class="px-4 py-3 whitespace-nowrap border-b dark:border-gray-700">${reg.area || reg.AREA}</td>
-      <td class="px-4 py-3 whitespace-nowrap border-b dark:border-gray-700">
-        <span class="px-2 py-1 text-[10px] rounded-full font-medium ${colorTipo}">${tipo}</span>
-      </td>
-      <td class="px-4 py-3 whitespace-nowrap text-center font-medium border-b dark:border-gray-700">${reg.peso || reg.PESO}</td>
-      <td class="px-4 py-3 whitespace-nowrap text-center text-gray-500 border-b dark:border-gray-700">${reg.bolsas || reg.BOLSAS_USADAS || reg['BOLSAS USADAS'] || 0}</td>
-      <td class="px-4 py-3 whitespace-nowrap text-center border-b dark:border-gray-700">
-        <button onclick="abrirModalEdicion('${reg.id}')" class="text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300 hover:bg-green-50 dark:hover:bg-green-900/40 p-2 rounded-full transition-colors" title="Editar">
-          <i class="ph ph-pencil-simple text-lg"></i>
-        </button>
-      </td>
-    `;
-    tbody.appendChild(tr);
-  });
-}
-
-window.abrirModalEdicion = function(id) {
-  if (!navigator.onLine) {
-    alert("Para editar registros necesitas conexión a internet.");
-    return;
-  }
-
-  const registro = todosLosRegistros.find(r => String(r.id) === String(id));
-  if (!registro) return;
-  
-  document.getElementById('editId').value = registro.id;
-  document.getElementById('editArea').value = registro.area || registro.AREA;
-  document.getElementById('editTipo').value = registro.tipo || registro.TIPO;
-  document.getElementById('editPeso').value = registro.peso || registro.PESO || 0;
-  document.getElementById('editBolsas').value = registro.bolsas || registro.BOLSAS_USADAS || registro['BOLSAS USADAS'] || 1;
-  document.getElementById('editObservaciones').value = obtenerObservaciones(registro);
-  
-  document.getElementById('modalEdicion').classList.remove('hidden');
-};
-
-window.cerrarModalEdicion = function() {
-  document.getElementById('modalEdicion').classList.add('hidden');
-};
-
-document.getElementById('formEdicionRegistro').addEventListener('submit', async function(e) {
-  e.preventDefault();
-  
-  const btnGuardar = document.getElementById('btnGuardarEdicion');
-  const originalText = btnGuardar.innerHTML;
-  btnGuardar.disabled = true;
- btnGuardar.innerHTML = '<i class="ph ph-spinner animate-spin inline-block text-xl"></i> Guardando...';
-  
-  const valEmail = AppState.user.email || AppState.user.usuario; // Fallback por si el hub no manda email
-  
-  const payload = {
-    action: 'editarRegistro',
-    id: document.getElementById('editId').value,
-    supervisorEmail: valEmail, 
-    area: document.getElementById('editArea').value,
-    tipo: document.getElementById('editTipo').value,
-    peso: parseFloat(document.getElementById('editPeso').value),
-    bolsas: parseInt(document.getElementById('editBolsas').value),
-    observaciones: document.getElementById('editObservaciones').value
-  };
-
-  try {
-    const response = await fetch(SCRIPT_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify(payload)
-    });
-    
-    const result = await response.json();
-    
-    if (result.success || result.status === 'success') {
-      const index = todosLosRegistros.findIndex(r => String(r.id) === String(payload.id));
-      if (index !== -1) {
-        todosLosRegistros[index] = { ...todosLosRegistros[index], ...payload };
-      }
-      renderizarMisRegistros();
-      aplicarFiltros(); 
-      cerrarModalEdicion();
-    } else {
-      alert("Error: " + result.message);
-    }
-  } catch (error) {
-    console.error("Error actualizando registro:", error);
-    alert("Ocurrió un error de conexión al actualizar.");
-  } finally {
-    btnGuardar.disabled = false;
-    btnGuardar.innerHTML = originalText;
-  }
-});
-
-
-// ==========================================
-// FORMULARIO DE REGISTRO Y ENVÍO HÍBRIDO
-// ==========================================
-const imagenInput = document.getElementById('imagen');
-const fileNameDisplay = document.getElementById('fileNameDisplay');
-const imagePlaceholder = document.getElementById('imagePlaceholder');
-const imagePreviewContainer = document.getElementById('imagePreviewContainer');
-const imagePreview = document.getElementById('imagePreview');
-const removeImageBtn = document.getElementById('removeImageBtn');
-
-let imageBase64 = '';
-let imageMimeType = '';
-let imageName = '';
-
-// ==========================================
-// CAPTURA Y PROCESAMIENTO ASÍNCRONO DE EVIDENCIA
-// ==========================================
-imagenInput.addEventListener('change', async function(e) {
-  const file = e.target.files[0];
-  if (file) {
-    // UI: Estado de carga en el placeholder (UX Premium)
-    imagePlaceholder.innerHTML = `
-      <i class="ph ph-spinner animate-spin mx-auto text-4xl text-green-500"></i>
-      <p class="text-xs text-gray-500 mt-2">Optimizando evidencia...</p>
-    `;
-    
-    try {
-      // --- PASO CLAVE: PROCESAMIENTO EN <CANVAS> ---
-      // Ejecutamos la compresión instantánea en el Frontend
-      const { base64, type } = await procesarYComprimirImagen(file);
-      
-      // Actualizamos variables globales con datos ligeros
-      imageBase64 = base64;
-      imageMimeType = type; // Ahora será 'image/jpeg' siempre
-      imageName = file.name.replace(/\.[^/.]+$/, "") + "_opt.jpg"; // Renombramos para trazabilidad
-      
-      // UI: Actualizar vista previa con la imagen ya COMPRIMIDA
-      // Usamos el Base64 ligero para la vista previa, garantizando fluidez del DOM
-      imagePreview.src = `data:${type};base64,${base64}`;
-      fileNameDisplay.textContent = imageName;
-      
-      // Restaurar UI de placeholders y mostrar preview
-      imagePlaceholder.classList.add('hidden');
-      imagePreviewContainer.classList.remove('hidden');
-      imagePreviewContainer.classList.add('flex');
-      
-    } catch (error) {
-      console.error("Error procesando imagen:", error);
-      alert("No se pudo procesar la imagen. Intenta tomar otra foto o subir un archivo más ligero.");
-      resetImageUI();
+    } catch (err) {
+        alert("Error de Red al guardar en la nube. Revise su conexión.");
     } finally {
-      // Restaurar el HTML original del placeholder por si acaso
-      if (imagePlaceholder.innerHTML.includes('ph-spinner')) {
-         imagePlaceholder.innerHTML = `
-          <i class="ph ph-camera mx-auto text-4xl text-gray-400 dark:text-gray-500"></i>
-          <div class="flex text-sm justify-center">
-            <label for="imagen" class="relative cursor-pointer bg-white dark:bg-gray-800 rounded-md font-medium text-green-600 dark:text-green-400 hover:text-green-500 px-3 py-2 border border-green-200 dark:border-gray-600 shadow-sm transition-all hover:shadow">
-              <span><i class="ph ph-camera-plus mr-1"></i> Tomar foto o subir</span>
-            </label>
-          </div>
-          <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">Formatos soportados: PNG, JPG</p>
-        `;
-      }
+        btn.disabled = false; btn.innerHTML = origHTML;
     }
-    
+};
+
+// ==========================================
+// 7. GESTOR TÉCNICO DE PASOS (REORDENAMIENTO Y EDICIÓN IN-PLACE)
+// ==========================================
+
+window.updateFileText = function (input) {
+  const d = document.getElementById("fileNameDisplay");
+  if (!d) return;
+  if (input.files.length > 0) {
+    d.textContent = "📸 " + input.files[0].name; 
+    d.classList.add("text-blue-600", "font-bold", "dark:text-blue-400");
   } else {
-    resetImageUI();
+    d.textContent = "Foto Cámara o Archivo..."; 
+    d.classList.remove("text-blue-600", "font-bold", "dark:text-blue-400");
   }
-});
+};
 
-removeImageBtn.addEventListener('click', () => resetImageUI());
+window.addAdvancedStep = function () {
+  const desc = getFieldValue("stepDesc");
+  if (!desc || desc === "<br>") return alert("Describa el paso operativo.");
 
-function resetImageUI() {
-  imagenInput.value = '';
-  imagePreview.src = '';
-  imagePlaceholder.classList.remove('hidden');
-  imagePreviewContainer.classList.add('hidden');
-  imagePreviewContainer.classList.remove('flex');
-  imageBase64 = '';
-  imageMimeType = '';
-  imageName = '';
-  document.getElementById('observaciones').value = '';
-}
+  const typeInput = document.getElementById("stepType");
+  const fileInput = document.getElementById("stepImage");
+  const type = typeInput ? typeInput.value : "INFO";
 
-const form = document.getElementById('residuosForm');
-const submitBtn = document.getElementById('submitBtn');
-const successMessage = document.getElementById('successMessage');
-const registrosContainer = document.getElementById('registrosContainer');
-
-form.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  
-  if(!AppState.isSessionVerified) return alert("Sesión no validada por el Hub GenApps.");
-
-  const btnOriginalHtml = submitBtn.innerHTML;
-  submitBtn.disabled = true;
-  submitBtn.innerHTML = '<i class="ph ph-spinner animate-spin inline-block text-xl"></i> <span>Guardando...</span>';
-  
-  // 1. Extraemos y formateamos la Fecha (De YYYY-MM-DD a DD/MM/YYYY para el Backend)
-  const rawFecha = document.getElementById('fechaRegistro').value;
-  const partesFecha = rawFecha.split('-');
-  const fechaVal = partesFecha.length === 3 ? `${partesFecha[2]}/${partesFecha[1]}/${partesFecha[0]}` : rawFecha;
-  
-  // 2. Extraemos la hora
-  const horaVal = document.getElementById('horaRegistro').value;
-  
-  const valEmail = AppState.user.email || AppState.user.usuario;
-
-  const formData = {
-    action: 'registrar',
-    supervisor: valEmail, 
-    area: document.getElementById('area').value,
-    tipo: document.getElementById('tipo').value,
-    peso: document.getElementById('peso').value,
-    bolsas: document.getElementById('bolsas').value,
-    fecha: fechaVal,
-    hora: horaVal,
-    observaciones: document.getElementById('observaciones').value,
-    imagenBase64: imageBase64,
-    imagenMimeType: imageMimeType,
-    imagenNombre: imageName
+  const processStep = (imageBase64) => {
+      if (state.form.editingStepId) {
+          // MODO ACTUALIZACIÓN (Mantiene la posición)
+          const idx = state.form.advancedSteps.findIndex(s => s.id === state.form.editingStepId);
+          if (idx > -1) {
+              state.form.advancedSteps[idx].desc = desc;
+              state.form.advancedSteps[idx].type = type;
+              if (imageBase64 !== undefined) state.form.advancedSteps[idx].image = imageBase64; 
+          }
+      } else {
+          // MODO NUEVO PASO (Añade al final)
+          state.form.advancedSteps.push({ id: Date.now(), desc, type, image: imageBase64 || null });
+      }
+      _resetStepUI();
   };
 
- // 1. UI OPTIMISTA: Encolamos en IndexedDB
-  await SyncManager.enqueue(formData);
-  agregarRegistroAUi(formData, true);
-  
-  // 2. Feedback visual persistente (4 segundos)
-  successMessage.innerHTML = '<i class="ph-fill ph-check-circle text-xl mr-2 text-green-600 dark:text-green-400"></i> ¡Registro capturado!';
-  successMessage.classList.remove('opacity-0');
-  
-  // Limpiamos timeouts previos por si el usuario presiona "Guardar" varias veces seguidas
-  if (window.successTimeout) clearTimeout(window.successTimeout);
-  window.successTimeout = setTimeout(() => successMessage.classList.add('opacity-0'), 4000);
-  
-  // 3. Limpiamos y preparamos para el siguiente registro instantáneamente
-  document.getElementById('peso').value = '';
-  document.getElementById('bolsas').value = '1';
-  resetImageUI();
-  actualizarTimestamp();
-  
-  // HABILITAMOS EL BOTÓN DE INMEDIATO
-  submitBtn.disabled = false;
-  submitBtn.innerHTML = btnOriginalHtml;
-
-  // 4. Disparamos la sincronización silenciosa (Fire and Forget)
-  SyncManager.sync();
-});
-
-function agregarRegistroAUi(data, isPending = false) {
-  if (registrosContainer.querySelector('.italic')) {
-    registrosContainer.innerHTML = '';
+  if (fileInput && fileInput.files.length > 0) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const cvs = document.createElement("canvas"); let w = img.width, h = img.height;
+        if (w > 800) { h = Math.round((h * 800) / w); w = 800; }
+        cvs.width = w; cvs.height = h; cvs.getContext("2d").drawImage(img, 0, 0, w, h);
+        processStep(cvs.toDataURL("image/jpeg", 0.7));
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(fileInput.files[0]);
+  } else {
+    processStep(undefined); // undefined = "mantener imagen actual" si estamos editando
   }
-  const colorTipo = data.tipo === 'Organico' ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' :
-    data.tipo === 'Plastico' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400' : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300';
+};
+
+function _resetStepUI() {
+  setFieldValue("stepDesc", "");
+  const fileInput = document.getElementById("stepImage");
+  if (fileInput) { fileInput.value = ""; window.updateFileText(fileInput); }
   
-  const supervisorCorto = data.supervisor.split('@')[0];
-  const idTemporal = data._localId || Math.floor(Math.random() * 1000000).toString().padStart(6, '0');
-  const fotoIcon = data.imagenBase64 ? '<i class="ph-fill ph-image text-green-500" title="Foto adjunta"></i>' : '';
-  const fechaMostrar = formatearFechaEstandar(data.fecha);
-  const horaMostrar = formatearHora24(data.hora);
+  state.form.editingStepId = null; 
+  
+  // Resetear botón a estado "Añadir"
+  const btn = document.getElementById("btnAddStep");
+  const btnTxt = document.getElementById("btnAddStepText");
+  if(btnTxt) btnTxt.textContent = "Añadir Paso";
+  if(btn) {
+      btn.classList.replace("bg-green-600", "bg-blue-600");
+      btn.classList.replace("hover:bg-green-800", "hover:bg-blue-800");
+  }
 
-  const statusIcon = isPending 
-    ? `<span id="sync-tag-${idTemporal}"><i class="ph-fill ph-cloud-slash text-yellow-500 ml-1" title="Pendiente de red"></i></span>`
-    : `<span id="sync-tag-${idTemporal}"><i class="ph-fill ph-cloud-check text-green-500 ml-1" title="Sincronizado"></i></span>`;
+  window.renderAdvancedSteps();
+}
 
-  const html = `
-      <div class="p-4 rounded-lg border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700/50 transition-colors fade-in">
-          <div class="flex justify-between items-start mb-2">
-              <span class="text-xs font-mono text-gray-500 dark:text-gray-400">#${idTemporal.substring(idTemporal.length - 6)} ${fotoIcon} ${statusIcon}</span>
-              <span class="text-xs px-2 py-1 rounded-full font-medium ${colorTipo}">${data.tipo}</span>
-          </div>
-          <p class="font-medium text-gray-900 dark:text-gray-100">${data.area}</p>
-          <div class="mt-2 text-sm text-gray-600 dark:text-gray-400 flex justify-between">
-              <span>${data.peso} kg</span>
-              <span>${data.bolsas} bolsa(s)</span>
-          </div>
-          <div class="mt-2 text-xs text-gray-500 flex justify-between items-center border-t border-gray-200 dark:border-gray-700 pt-2">
-              <span class="truncate max-w-[120px]" title="${data.supervisor}">${supervisorCorto}</span>
-              <span>${fechaMostrar} ${horaMostrar}</span>
+window.removeAdvancedStep = function (id) {
+  state.form.advancedSteps = state.form.advancedSteps.filter((s) => s.id !== id);
+  window.renderAdvancedSteps();
+};
+
+window.editStep = function(id) {
+    const step = state.form.advancedSteps.find(s => s.id === id);
+    if (!step) return;
+
+    setFieldValue("stepDesc", step.desc);
+    document.getElementById("stepType").value = step.type;
+    state.form.editingStepId = id; 
+    
+    // Cambiar botón a estado "Actualizar" (Verde)
+    const btn = document.getElementById("btnAddStep");
+    const btnTxt = document.getElementById("btnAddStepText");
+    if(btnTxt) btnTxt.textContent = "Actualizar Paso";
+    if(btn) {
+        btn.classList.replace("bg-blue-600", "bg-green-600");
+        btn.classList.replace("hover:bg-blue-800", "hover:bg-green-800");
+    }
+    
+    document.getElementById("stepDesc").scrollIntoView({ behavior: 'smooth', block: 'center' });
+    document.getElementById("stepDesc").focus();
+};
+
+// ⬆️⬇️ LÓGICA DE REORDENAMIENTO
+window.moveStep = function(index, direction) {
+    if (direction === 'up' && index > 0) {
+        const temp = state.form.advancedSteps[index];
+        state.form.advancedSteps[index] = state.form.advancedSteps[index - 1];
+        state.form.advancedSteps[index - 1] = temp;
+    } else if (direction === 'down' && index < state.form.advancedSteps.length - 1) {
+        const temp = state.form.advancedSteps[index];
+        state.form.advancedSteps[index] = state.form.advancedSteps[index + 1];
+        state.form.advancedSteps[index + 1] = temp;
+    }
+    window.renderAdvancedSteps();
+};
+
+window.loadPoesTemplate = function() {
+    if (state.form.advancedSteps.length > 0) {
+        if (!confirm("Se perderán los pasos actuales. ¿Cargar plantilla?")) return;
+    }
+    state.form.advancedSteps = [
+        { id: Date.now()+1, type: 'INFO', desc: '<b>PASO 1: Limpieza en Seco (Preparación).</b> Retirar restos gruesos orgánicos, desarmar piezas móviles y proteger componentes eléctricos.', image: null },
+        { id: Date.now()+2, type: 'INFO', desc: '<b>PASO 2: Pre-enjuague.</b> Aplicar agua a presión (T° tibia) para remover suciedad suelta superficial.', image: null },
+        { id: Date.now()+3, type: 'PC', desc: '<b>PASO 3: Lavado (Acción Mecánica).</b> Aplicar detergente y fregar mecánicamente todas las superficies con escobillas de nylon.', image: null },
+        { id: Date.now()+4, type: 'INFO', desc: '<b>PASO 4: Enjuague Final.</b> Aplicar agua potable hasta eliminar por completo cualquier rastro químico.', image: null },
+        { id: Date.now()+5, type: 'PC', desc: '<b>PASO 5: Inspección Pre-Operacional.</b> Realizar verificación visual minuciosa para confirmar ausencia de restos orgánicos.', image: null },
+        { id: Date.now()+6, type: 'PCC', desc: '<b>PASO 6: Sanitización / Desinfección.</b> Aplicar agente desinfectante respetando estrictamente la concentración (PPM) y tiempo de contacto.', image: null },
+        { id: Date.now()+7, type: 'INFO', desc: '<b>PASO 7: Secado y Montaje.</b> Retirar exceso de humedad para evitar condensación y re-ensamblar equipos.', image: null }
+    ];
+    window.renderAdvancedSteps();
+};
+
+window.renderAdvancedSteps = function () {
+  const container = document.getElementById("advancedStepsList");
+  if (!container) return;
+
+  if (state.form.advancedSteps.length === 0) {
+    container.innerHTML = `<div class="flex flex-col items-center justify-center py-10 text-gray-400 dark:text-gray-500"><svg class="w-12 h-12 mb-3 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 002-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg><p class="text-sm font-medium">Historial vacío. Diseñe el primer paso en el panel superior.</p></div>`;
+    return;
+  }
+
+  container.innerHTML = state.form.advancedSteps.map((s, i) => {
+      const badgeColor = s.type === "PCC" ? "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-400" : s.type === "PC" ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-400" : "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300";
+      const imgHTML = s.image ? `<img src="${s.image}" class="mt-2 h-16 object-cover rounded border dark:border-gray-600">` : "";
+      
+      const btnUp = i > 0 ? `<button type="button" onclick="window.moveStep(${i}, 'up')" class="bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 px-1.5 py-0.5 rounded text-[10px]" title="Subir">⬆️</button>` : `<span class="px-1.5 py-0.5 w-5"></span>`;
+      const btnDown = i < state.form.advancedSteps.length - 1 ? `<button type="button" onclick="window.moveStep(${i}, 'down')" class="bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 px-1.5 py-0.5 rounded text-[10px]" title="Bajar">⬇️</button>` : `<span class="px-1.5 py-0.5 w-5"></span>`;
+
+      return `
+    <div class="bg-white dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-600 mb-2 flex gap-3 fade-in group">
+      <div class="flex flex-col items-center gap-1 shrink-0">
+          <div class="w-6 h-6 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-400 font-bold flex items-center justify-center text-xs">${i + 1}</div>
+          <div class="flex flex-col gap-0.5 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              ${btnUp}${btnDown}
           </div>
       </div>
-  `;
-  registrosContainer.insertAdjacentHTML('afterbegin', html);
-}
+      <div class="flex-grow overflow-hidden">
+          <div class="flex justify-between items-center mb-1">
+            <span class="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase ${badgeColor}">${s.type}</span>
+            <div class="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button type="button" onclick="window.editStep(${s.id})" class="text-blue-600 bg-blue-50 hover:bg-blue-100 dark:bg-blue-900/30 dark:hover:bg-blue-900/50 dark:text-blue-400 px-2 py-1 rounded text-[10px] font-bold uppercase tracking-widest transition">✏️ Editar</button>
+                <button type="button" onclick="window.removeAdvancedStep(${s.id})" class="text-red-600 bg-red-50 hover:bg-red-100 dark:bg-red-900/30 dark:hover:bg-red-900/50 px-2 py-1 rounded font-bold transition">✖</button>
+            </div>
+          </div>
+          <div class="text-sm font-medium text-gray-800 dark:text-gray-200 leading-relaxed">${s.desc}</div>
+          ${imgHTML}
+      </div>
+    </div>`;
+    }).join("");
+};
 
-/**
- * Procesa una imagenFile (File objeto) usando <canvas> para redimensionar y comprimir.
- * @param {File} imageFile - El archivo original capturado del input.
- * @returns {Promise<{base64: string, type: string}>} - Promesa con los datos optimizados.
- */
-function procesarYComprimirImagen(imageFile) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    
-    // 1. Leer archivo original como DataURL
-    reader.readAsDataURL(imageFile);
-    
-    reader.onload = (event) => {
-      const img = new Image();
-      img.src = event.target.result;
-      
-      img.onload = () => {
-        // 2. Crear Canvas Oculto
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        
-        let width = img.width;
-        let height = img.height;
-        
-        // 3. Calcular Redimensionado Proporcional (Aspect Ratio)
-        if (width > MAX_IMAGE_WIDTH) {
-          height = Math.round((height * MAX_IMAGE_WIDTH) / width);
-          width = MAX_IMAGE_WIDTH;
-        }
-        
-        // 4. Configurar dimensiones del Canvas y dibujar
-        canvas.width = width;
-        canvas.height = height;
-        
-        // Volcar imagen al canvas (esto ya aplica suavizado nativo)
-        ctx.drawImage(img, 0, 0, width, height);
-        
-        // 5. Exportar a Base64 optimizado (JPEG forzado para máxima compresión)
-        // .toDataURL(type, quality) -> quality es clave aquí.
-        const optimizedBase64DataUrl = canvas.toDataURL('image/jpeg', IMAGE_QUALITY);
-        
-        // Extraer solo la cadena Base64 pura para el Backend
-        const finalBase64 = optimizedBase64DataUrl.split(',')[1];
-        
-        // Liberar memoria explícitamente (Buena práctica en móviles)
-        canvas.width = 0; canvas.height = 0; 
+// ==========================================
+// 8. CRUD Y EDICIÓN
+// ==========================================
+window.handleFormSubmit = async function (e) {
+  e.preventDefault();
+  
+  if (!state.isSessionVerified || !state.user) return alert("Acción bloqueada: Esperando sincronización con el HUB.");
+  if (!window.getPermisos().canEdit) return alert("Acción denegada por seguridad (Rol: Operario).");
+  if (state.form.advancedSteps.length === 0) return alert("Debe incluir al menos 1 paso en el procedimiento.");
 
-        resolve({
-          base64: finalBase64,
-          type: 'image/jpeg' // Forzamos JPEG en la salida optimizada
-        });
-      };
-      
-      img.onerror = (err) => reject('Error cargando imagen en objeto Image: ' + err);
-    };
-    
-    reader.onerror = (err) => reject('Error leyendo archivo original: ' + err);
-  });
-}
+  const isEditing = !!state.form.editingId;
+  const poeId = isEditing ? state.form.editingId : `UUID-${Date.now()}`;
+
+  let originalDate = new Date().toISOString();
+  let autorOriginal = state.user.nombre; 
+  let ultimoEditor = "";
+
+  if (isEditing) {
+    const existing = state.poes.find((p) => p.id === poeId);
+    if (existing) {
+        originalDate = existing.date;
+        autorOriginal = existing.author || autorOriginal; 
+        ultimoEditor = state.user.nombre;                 
+    }
+  }
+
+  const poeData = {
+    id: poeId, code: getFieldValue("code"), category: getFieldValue("category"), subCategory: getFieldValue("poeSubCategory"),
+    title: getFieldValue("title"), version: getFieldValue("poeVersion"), status: getFieldValue("poeStatus"), objective: getFieldValue("objective"),
+    scope: getFieldValue("scope"), frequency: getFieldValue("monitoring"), responsibles: getFieldValue("responsibles"),
+    definitions: getFieldValue("definitions"), materials: getFieldValue("materials"), monitoring: getFieldValue("monitoring"),
+    corrective_actions: getFieldValue("correctiveActions"), records: getFieldValue("records"), references: getFieldValue("references"),
+    author: autorOriginal, lastEditor: ultimoEditor,
+    procedure: JSON.stringify(state.form.advancedSteps), date: originalDate, _syncStatus: "pending"
+  };
+
+  await POEDB.save("poes", poeData);
+  await POEDB.save("sync_queue", { id: poeData.id, payload: poeData });
+
+  window.closeModal();
+  await window.refreshUI();
+  window.pushSync();
+};
+
+window.deletePOE = async function (id) {
+  if (!window.getPermisos().canEdit) return alert("Acción denegada por seguridad.");
+  if (!confirm("¿Está seguro de marcar como obsoleto este procedimiento?")) return;
+  const poe = state.poes.find((p) => p.id === id);
+  if (poe) {
+    poe.status = "OBS"; poe._syncStatus = "pending";
+    await POEDB.save("sync_queue", { id, payload: poe });
+    await POEDB.delete("poes", id);
+    await window.refreshUI();
+    window.pushSync();
+  }
+};
+
+window.editPOE = function (id) {
+  const poe = state.poes.find((p) => p.id === id);
+  if (!poe) return;
+
+  state.form.editingId = poe.id;
+  document.getElementById("modalTitle").textContent = `Editar Procedimiento: ${poe.code}`;
+
+  const catSelect = document.getElementById("category");
+  const subCatSelect = document.getElementById("poeSubCategory");
+
+  catSelect.value = poe.category; catSelect.disabled = true; catSelect.classList.add("bg-gray-100", "dark:bg-gray-600", "cursor-not-allowed");
+  window.updateSubCategories();
+
+  setTimeout(() => {
+    subCatSelect.value = poe.subCategory; subCatSelect.disabled = true; subCatSelect.classList.add("bg-gray-100", "dark:bg-gray-600", "cursor-not-allowed");
+    document.getElementById("code").value = poe.code;
+  }, 50);
+
+  let nextVersion = (parseFloat(poe.version || 1.0) + 0.1).toFixed(1);
+  if (isNaN(nextVersion)) nextVersion = "1.1";
+
+  const vInput = document.getElementById("poeVersion");
+  vInput.value = nextVersion;
+  vInput.classList.add("bg-blue-50", "text-blue-800", "font-bold", "dark:bg-blue-900/40", "dark:text-blue-300");
+
+  setFieldValue("title", poe.title);
+  setFieldValue("poeStatus", poe.status || "ACT");
+  setFieldValue("objective", poe.objective);
+  setFieldValue("scope", poe.scope);
+  setFieldValue("responsibles", poe.responsibles);
+  setFieldValue("definitions", poe.definitions);
+  setFieldValue("materials", poe.materials);
+  setFieldValue("monitoring", poe.monitoring || poe.frequency);
+  setFieldValue("correctiveActions", poe.corrective_actions);
+  setFieldValue("records", poe.records);
+  setFieldValue("references", poe.references);
+
+  try { state.form.advancedSteps = JSON.parse(poe.procedure); } catch (e) { state.form.advancedSteps = []; }
+  window.renderAdvancedSteps();
+
+  const m = document.getElementById("modal");
+  if (m) { m.classList.remove("hidden"); m.classList.add("flex"); }
+};
+
+// ==========================================
+// 9. VISOR DE DOCUMENTO Y EXPORTACIÓN
+// ==========================================
+window.viewPOE = function (id) {
+  const poe = state.poes.find((p) => p.id === id);
+  if (!poe) return;
+
+  const btnExportWord = document.getElementById("btnExportWord");
+  if (btnExportWord) btnExportWord.onclick = () => window.exportPOEToWord(poe.id);
+
+  let stepsHTML = "";
+  try {
+    const arr = JSON.parse(poe.procedure);
+    stepsHTML = arr.map((s, i) => {
+        const bColor = s.type === "PCC" ? "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-400 border-red-200 dark:border-red-800" : s.type === "PC" ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-400 border-yellow-200 dark:border-yellow-800" : "bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300 border-gray-200 dark:border-gray-600";
+        const img = s.image ? `<img src="${s.image}" class="mt-4 max-h-64 object-cover rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm">` : "";
+        return `
+      <div class="flex gap-4 p-5 md:p-6 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-sm hover:shadow-md transition">
+        <div class="w-10 h-10 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-400 font-black flex items-center justify-center shrink-0 text-lg border border-blue-200 dark:border-blue-800">${i + 1}</div>
+        <div class="flex-grow overflow-hidden">
+           <span class="text-[10px] font-black px-2.5 py-1 rounded border uppercase mb-3 inline-block tracking-widest ${bColor}">${s.type}</span>
+           <div class="text-base font-medium text-gray-800 dark:text-gray-200 leading-relaxed">${s.desc}</div>
+           ${img}
+        </div>
+      </div>`;
+      }).join("");
+  } catch (e) {
+    stepsHTML = `<div class="bg-white dark:bg-gray-800 p-6 rounded-xl border border-gray-200 dark:border-gray-700"><p class="text-base font-medium text-gray-800 dark:text-gray-200 leading-relaxed">${poe.procedure}</p></div>`;
+  }
+
+  const catObj = state.areas.find((c) => c.areaAbbr === poe.subCategory);
+  const catName = catObj ? catObj.areaName : poe.subCategory;
+  const statusColor = poe.status === "ACT" || poe.status === "Activo" ? "bg-green-100 text-green-800 border-green-200 dark:bg-green-900/40 dark:text-green-300 dark:border-green-800" : "bg-yellow-100 text-yellow-800 border-yellow-200 dark:bg-yellow-900/40 dark:text-yellow-300 dark:border-yellow-800";
+  const statusText = poe.status === "ACT" ? "ACTIVO" : "EN REVISIÓN";
+
+  const vContent = document.getElementById("viewContent");
+  if (vContent) {
+    vContent.innerHTML = `
+      <div class="bg-white dark:bg-gray-800 p-8 md:p-10 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-sm mb-8">
+        <div class="flex flex-col md:flex-row justify-between items-start border-b-2 border-gray-100 dark:border-gray-700 pb-8 mb-8 gap-6">
+          <div class="w-full md:w-2/3">
+            <span class="inline-block px-3 py-1 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 font-bold text-xs rounded-lg uppercase tracking-wider mb-3 border border-gray-200 dark:border-gray-600">${catName}</span>
+            <h2 class="text-3xl md:text-4xl font-black text-gray-900 dark:text-white uppercase tracking-tight leading-tight">${poe.title}</h2>
+          </div>
+          <div class="md:text-right flex flex-col md:items-end bg-gray-50 dark:bg-gray-900/50 p-5 rounded-xl border border-gray-200 dark:border-gray-700 w-full md:w-1/3">
+            <p class="text-2xl font-black font-mono text-blue-800 dark:text-blue-400 tracking-wider">${poe.code}</p>
+            <div class="flex items-center md:justify-end gap-3 mt-2 text-sm font-bold text-gray-500 dark:text-gray-400">
+              <span>Versión ${poe.version}</span><span>•</span><span>${new Date(poe.date).toLocaleDateString()}</span>
+            </div>
+            <div class="mt-4 flex flex-col items-end gap-2">
+                <span class="inline-flex items-center px-3 py-1 rounded-md text-xs font-black uppercase tracking-widest border ${statusColor}">${statusText}</span>
+                <div class="text-xs text-gray-500 dark:text-gray-400 font-medium">✍️ Creado por: <span class="font-bold text-gray-700 dark:text-gray-300">${poe.author || 'Área Producción'}</span></div>
+                ${poe.lastEditor ? `<div class="text-xs text-gray-500 dark:text-gray-400 font-medium text-right">🔄 Últ. Edición: <span class="font-bold text-gray-700 dark:text-gray-300">${poe.lastEditor}</span></div>` : ''}
+            </div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
+           <div><h4 class="text-xs font-black text-blue-800 dark:text-blue-400 uppercase tracking-widest mb-2 flex items-center gap-2">🎯 Objetivo General</h4><div class="text-sm text-gray-700 dark:text-gray-200 font-medium leading-relaxed bg-gray-50 dark:bg-gray-900/50 p-5 rounded-xl border border-gray-100 dark:border-gray-700 h-full">${poe.objective || "No especificado"}</div></div>
+           <div><h4 class="text-xs font-black text-blue-800 dark:text-blue-400 uppercase tracking-widest mb-2 flex items-center gap-2">📏 Alcance Operativo</h4><div class="text-sm text-gray-700 dark:text-gray-200 font-medium leading-relaxed bg-gray-50 dark:bg-gray-900/50 p-5 rounded-xl border border-gray-100 dark:border-gray-700 h-full">${poe.scope || "No especificado"}</div></div>
+           <div><h4 class="text-xs font-black text-blue-800 dark:text-blue-400 uppercase tracking-widest mb-2 flex items-center gap-2">👤 Responsabilidades</h4><div class="text-sm text-gray-700 dark:text-gray-200 font-medium leading-relaxed bg-gray-50 dark:bg-gray-900/50 p-5 rounded-xl border border-gray-100 dark:border-gray-700 h-full">${poe.responsibles || "No especificadas"}</div></div>
+           <div><h4 class="text-xs font-black text-blue-800 dark:text-blue-400 uppercase tracking-widest mb-2 flex items-center gap-2">📝 Definiciones</h4><div class="text-sm text-gray-700 dark:text-gray-200 font-medium leading-relaxed bg-gray-50 dark:bg-gray-900/50 p-5 rounded-xl border border-gray-100 dark:border-gray-700 h-full">${poe.definitions || "Ninguna"}</div></div>
+           <div class="md:col-span-2"><h4 class="text-xs font-black text-blue-800 dark:text-blue-400 uppercase tracking-widest mb-2 flex items-center gap-2">🛠️ Equipos, Materiales y EPPs</h4><div class="text-sm text-gray-700 dark:text-gray-200 font-medium leading-relaxed bg-gray-50 dark:bg-gray-900/50 p-5 rounded-xl border border-gray-100 dark:border-gray-700 h-full">${poe.materials || "No especificados"}</div></div>
+        </div>
+        
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
+           <div><h4 class="text-xs font-black text-red-800 dark:text-red-400 uppercase tracking-widest mb-2 flex items-center gap-2">⏱️ Frecuencia / Monitoreo</h4><div class="text-sm text-gray-800 dark:text-gray-100 font-bold leading-relaxed bg-red-50 dark:bg-red-900/20 p-5 rounded-xl border border-red-100 dark:border-red-900/50 h-full">${poe.monitoring || poe.frequency || "No especificada"}</div></div>
+           <div><h4 class="text-xs font-black text-red-800 dark:text-red-400 uppercase tracking-widest mb-2 flex items-center gap-2">⚠️ Acciones Correctivas (Desvíos)</h4><div class="text-sm text-gray-800 dark:text-gray-100 font-bold leading-relaxed bg-red-50 dark:bg-red-900/20 p-5 rounded-xl border border-red-100 dark:border-red-900/50 h-full">${poe.corrective_actions || "No especificadas"}</div></div>
+           <div><h4 class="text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-2">📎 Registros Asociados</h4><div class="text-sm text-gray-700 dark:text-gray-200 font-medium leading-relaxed bg-gray-50 dark:bg-gray-900/50 p-5 rounded-xl border border-gray-100 dark:border-gray-700 h-full">${poe.records || "Ninguno"}</div></div>
+           <div><h4 class="text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-2">📚 Referencias / Anexos</h4><div class="text-sm text-gray-700 dark:text-gray-200 font-medium leading-relaxed bg-gray-50 dark:bg-gray-900/50 p-5 rounded-xl border border-gray-100 dark:border-gray-700 h-full">${poe.references || "Ninguna"}</div></div>
+        </div>
+
+        <div>
+          <h4 class="text-sm font-black text-gray-800 dark:text-gray-100 uppercase tracking-widest mb-6 border-b-2 border-gray-200 dark:border-gray-700 pb-3">Desarrollo del Procedimiento Operativo</h4>
+          <div class="space-y-4">
+            ${stepsHTML}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  const m = document.getElementById("viewModal");
+  if (m) { document.getElementById("viewTitle").textContent = "Visor de Documento"; m.classList.remove("hidden"); m.classList.add("flex"); }
+};
+
+window.exportPOEToWord = function (id) {
+  const poe = state.poes.find((p) => p.id === id);
+  if (!poe) return;
+
+  let stepsHTML = "";
+  try {
+    const arr = JSON.parse(poe.procedure);
+    stepsHTML = arr.map((s, i) => `<div style="margin-bottom: 20px;"><p><strong>Paso ${i + 1}</strong> <span style="color: #555;">[${s.type}]</span></p><div style="margin-top: 0;">${s.desc}</div>${s.image ? `<img src="${s.image}" width="400" style="border: 1px solid #ccc; margin-top: 10px;">` : ""}</div>`).join("");
+  } catch (e) { stepsHTML = `<p>${poe.procedure}</p>`; }
+
+  const catObj = state.areas.find((c) => c.areaAbbr === poe.subCategory);
+  const catName = catObj ? catObj.areaName : poe.subCategory;
+
+  // 🧠 DETECCIÓN PARA EL TÍTULO DEL DOCUMENTO OFICIAL (POE vs POES)
+  const isPOES = poe.code.startsWith('POES');
+  const docTitle = isPOES ? 'Procedimiento Operativo Estandarizado de Saneamiento' : 'Procedimiento Operativo Estandarizado';
+
+  const htmlStr = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><title>${poe.code}</title><style>body { font-family: 'Arial'; color: #000; } table { width: 100%; border-collapse: collapse; margin-bottom: 20px; } th, td { border: 1px solid #000; padding: 8px; text-align: left; vertical-align: top; } th { background-color: #f2f2f2; width: 25%; } h1 { color: #1e3a5f; font-size: 24px; text-transform: uppercase; text-align: center; border-bottom: 2px solid #1e3a5f; padding-bottom: 10px; margin-bottom: 20px; } h2 { color: #2d5a87; font-size: 16px; border-bottom: 1px solid #ccc; padding-bottom: 4px; margin-top: 25px; } ul { list-style-type: disc; margin-left: 20px; margin-bottom: 5px; } ol { list-style-type: decimal; margin-left: 20px; margin-bottom: 5px; } ol[type="a"] { list-style-type: lower-alpha; } h3 { color: #1e3a5f; font-size: 14px; margin-top: 15px; margin-bottom: 5px; text-transform: uppercase; }</style></head><body>
+      <h1>La Genovesa Agroindustrias S.A.<br><span style="font-size:16px;">${docTitle}</span></h1>
+      <table><tr><th>Código:</th><td>${poe.code}</td><th>Versión:</th><td>v${poe.version} - ${poe.status}</td></tr><tr><th>Título:</th><td colspan="3"><strong>${poe.title}</strong></td></tr><tr><th>Área:</th><td>${catName}</td><th>Fecha:</th><td>${new Date(poe.date).toLocaleDateString()}</td></tr></table>
+      <h2>1. Contexto Operativo</h2><p><strong>Objetivo:</strong></p> ${poe.objective || "N/A"}<p><strong>Alcance:</strong></p> ${poe.scope || "N/A"}<p><strong>Responsabilidades:</strong></p> ${poe.responsibles || "N/A"}
+      <h2>2. Control y Recursos</h2><p><strong>Frecuencia:</strong></p> ${poe.monitoring || poe.frequency || "N/A"}<p><strong>Acciones Correctivas:</strong></p> ${poe.corrective_actions || "N/A"}<p><strong>Equipos y Materiales:</strong></p> ${poe.materials || "N/A"}<p><strong>Definiciones:</strong></p> ${poe.definitions || "N/A"}<p><strong>Registros:</strong></p> ${poe.records || "N/A"} | ${poe.references || ""}
+      <h2>3. Desarrollo del Procedimiento</h2><div style="border: 1px solid #000; padding: 15px;">${stepsHTML}</div>
+      <table style="border: none; margin-top: 50px;"><tr style="border: none;">
+      <td style="border: none; text-align: center; width: 50%;">_________________________<br><strong>Elaborado/Editado por:</strong><br>${poe.lastEditor || poe.author || 'Responsable de Área'}</td>
+      <td style="border: none; text-align: center; width: 50%;">_________________________<br><strong>Aprobación Calidad</strong></td></tr></table></body></html>`;
+
+  const blob = new Blob(["\ufeff", htmlStr], { type: "application/msword" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${poe.code}_${poe.title.replace(/[^a-z0-9]/gi, "_")}.doc`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+};
+
+// ==========================================
+// 10. MODALES AUXILIARES Y GESTORES
+// ==========================================
+window.openModal = function () {
+  const form = document.getElementById("poe-form");
+  if (form) form.reset();
+
+  state.form.editingId = null;
+  document.getElementById("modalTitle").textContent = "Registrar Procedimiento";
+
+  document.querySelectorAll('.rich-editor').forEach(el => el.innerHTML = "");
+
+  const catSelect = document.getElementById("category");
+  const subCatSelect = document.getElementById("poeSubCategory");
+  const versionInput = document.getElementById("poeVersion");
+
+  if (catSelect) { catSelect.disabled = false; catSelect.classList.remove("bg-gray-100", "dark:bg-gray-600", "cursor-not-allowed"); }
+  if (subCatSelect) { subCatSelect.disabled = false; subCatSelect.classList.remove("bg-gray-100", "dark:bg-gray-600", "cursor-not-allowed"); }
+  if (versionInput) { versionInput.value = "1.0"; versionInput.classList.remove("bg-blue-50", "text-blue-800", "font-bold", "dark:bg-blue-900/40", "dark:text-blue-300"); }
+
+  state.form.advancedSteps = [];
+  window.renderAdvancedSteps();
+  window.updateSubCategories();
+
+  const m = document.getElementById("modal");
+  if (m) { m.classList.remove("hidden"); m.classList.add("flex"); }
+};
+
+window.closeModal = function () { const m = document.getElementById("modal"); if (m) { m.classList.add("hidden"); m.classList.remove("flex"); } };
+window.closeViewModal = function () { const m = document.getElementById("viewModal"); if (m) { m.classList.add("hidden"); m.classList.remove("flex"); } };
+
+// ==========================================
+// 11. RED Y SINCRONIZACIÓN
+// ==========================================
+window.updateNet = function (status) {
+  const ind = document.getElementById("network-indicator"); const txt = document.getElementById("network-text");
+  if (!ind || !txt) return;
+  if (status === "online") { ind.className = "w-2.5 h-2.5 rounded-full bg-green-400 shadow-[0_0_8px_rgba(74,222,128,0.8)]"; txt.textContent = "ONLINE"; } 
+  else if (status === "sync") { ind.className = "w-2.5 h-2.5 rounded-full bg-yellow-400 shadow-[0_0_8px_rgba(250,204,21,0.8)] animate-pulse"; txt.textContent = "SYNC..."; } 
+  else { ind.className = "w-2.5 h-2.5 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.8)]"; txt.textContent = "OFFLINE"; }
+};
+
+window.pushSync = async function () {
+  if (!navigator.onLine) { window.updateNet("offline"); return; }
+  const q = await POEDB.getAll("sync_queue");
+  if (q.length === 0) { window.updateNet("online"); return; }
+  window.updateNet("sync");
+  for (let t of q) {
+    try {
+      const res = await fetch(GAS_ENDPOINT, { method: "POST", headers: { "Content-Type": "text/plain" }, body: JSON.stringify(t.payload) });
+      const r = await res.json();
+      if (r.status === "success") { t.payload._syncStatus = "synced"; await POEDB.save("poes", t.payload); await POEDB.delete("sync_queue", t.id); }
+    } catch (e) { break; }
+  }
+  window.updateNet(navigator.onLine ? "online" : "offline"); window.refreshUI();
+};
+
+window.pullSync = async function () {
+  if (!navigator.onLine) return;
+  try {
+    const rA = await fetch(GAS_DICT_ENDPOINT + "?action=get_areas"); const jA = await rA.json();
+    if (jA.status === "success") { const oldAreas = await POEDB.getAll("areas"); for (let oa of oldAreas) await POEDB.delete("areas", oa.id); for (let a of jA.data) await POEDB.save("areas", a); }
+
+    const rC = await fetch(GAS_ENDPOINT + "?action=get_config"); const jC = await rC.json();
+    if (jC.status === "success") { const oldConfig = await POEDB.getAll("sys_config"); for (let oc of oldConfig) await POEDB.delete("sys_config", oc.key); for (let i of jC.data) await POEDB.save("sys_config", i); }
+
+    const rP = await fetch(GAS_ENDPOINT + "?action=get_poes"); const jP = await rP.json();
+    if (jP.status === "success") {
+      const q = await POEDB.getAll("sync_queue"); const localPoes = await POEDB.getAll("poes");
+      for (let local of localPoes) if (!q.find((x) => x.id === local.id)) await POEDB.delete("poes", local.id);
+      for (let p of jP.data) if (!q.find((x) => x.id === p.id)) await POEDB.save("poes", p);
+    }
+    window.refreshUI();
+  } catch (e) { console.error("Error Sincronizando:", e); }
+};
+
+window.forceSync = async function () {
+  if (!navigator.onLine) return alert("⚠️ Sistema en modo offline.");
+  const btn = document.getElementById("btnForceSync"); if (!btn) return;
+  const originalHTML = btn.innerHTML;
+  btn.innerHTML = `<svg class="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> <span>Sincronizando...</span>`;
+  btn.disabled = true; btn.classList.add("opacity-75", "cursor-wait");
+  try { window.updateNet("sync"); await window.pushSync(); await window.pullSync(); } 
+  catch (error) {} 
+  finally { window.updateNet(navigator.onLine ? "online" : "offline"); btn.innerHTML = originalHTML; btn.disabled = false; btn.classList.remove("opacity-75", "cursor-wait"); }
+};
+
+window.addEventListener("online", () => window.pushSync());
+window.addEventListener("offline", () => window.updateNet("offline"));
+
+document.addEventListener("DOMContentLoaded", async () => {
+  window.updateNet(navigator.onLine ? "online" : "offline"); 
+  await POEDB.init(); 
+  
+  // 🔑 LLAVE DE DESARROLLO - BORRAR EN PRODUCCIÓN
+  if (!state.user) {
+      state.user = { nombre: 'Ingeniero', rol: 'ADMINISTRADOR', area: 'PROD', usuario: 'dev@genovesa.com' };
+      state.isSessionVerified = true;
+  }
+
+  const savedUser = sessionStorage.getItem('moduloUserPOE');
+  if (savedUser) { state.user = JSON.parse(savedUser); state.isSessionVerified = true; }
+  
+  await window.refreshUI(); 
+  setTimeout(() => window.initRichEditors(), 100); 
+  window.parent.postMessage({ type: 'MODULO_LISTO' }, '*');
+  setTimeout(async () => { await window.pullSync(); window.pushSync(); }, 1000);
+});
