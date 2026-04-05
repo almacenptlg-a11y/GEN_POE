@@ -1,536 +1,446 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="es" class="light">
 
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-
-  <title>Registro de Residuos</title>
-
-  <script src="https://unpkg.com/@phosphor-icons/web"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;600;700&display=swap" rel="stylesheet">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sistema POE - La Genovesa Agroindustrias S.A. (HACCP)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = { darkMode: 'class' }
+  </script>
   <link rel="stylesheet" href="styles.css">
+  
   <style>
-    .scrollbar-hide::-webkit-scrollbar {
-      display: none !important;
-      width: 0 !important;
-      height: 0 !important;
-      -webkit-appearance: none !important;
+    /* MOTOR WYSIWYG - Estilos Nativos y Modo Oscuro */
+    .rich-editor {
+        min-height: 120px; 
+        max-height: 500px;
+        overflow-y: auto;
+        resize: vertical; 
+        outline: none;
     }
-    .scrollbar-hide {
-      -ms-overflow-style: none !important; /* IE y Edge */
-      scrollbar-width: none !important;    /* Firefox */
+    .rich-editor:empty:before {
+        content: attr(data-placeholder);
+        color: #9ca3af;
+        pointer-events: none;
+        display: block;
+        font-style: italic;
+        white-space: pre-wrap; 
+        line-height: 1.5;
     }
+    .rich-text-content ul, .rich-editor ul { list-style-type: disc; margin-left: 1.5rem; margin-bottom: 0.5rem; }
+    .rich-text-content ol, .rich-editor ol { list-style-type: decimal; margin-left: 1.5rem; margin-bottom: 0.5rem; }
+    .rich-text-content ol[type="a"], .rich-editor ol[type="a"] { list-style-type: lower-alpha; }
+    .rich-text-content ol[type="i"], .rich-editor ol[type="i"] { list-style-type: lower-roman; }
+    .rich-text-content li, .rich-editor li { margin-bottom: 0.25rem; }
+    .rich-text-content h3, .rich-editor h3 { color: #1e3a5f; font-size: 1.1rem; font-weight: 900; text-transform: uppercase; margin-top: 0.5rem; border-bottom: 1px solid #e5e7eb; padding-bottom: 0.25rem;}
+    
+    .dark .rich-text-content h3, .dark .rich-editor h3 { color: #60a5fa; border-bottom-color: #374151; }
   </style>
 </head>
 
-<body
-  class="bg-gray-50 dark:bg-gray-900 text-gray-800 dark:text-gray-200 font-sans min-h-screen relative transition-colors duration-300 overflow-x-hidden w-full">
-  <div id="syncStatusBadge"
-    class="hidden fixed bottom-6 right-6 bg-gray-900/90 dark:bg-gray-100/90 backdrop-blur-md text-white dark:text-gray-900 px-5 py-3 rounded-full shadow-2xl border border-gray-700 dark:border-gray-200 text-sm font-medium flex items-center gap-3 z-[100] transition-all duration-300 transform translate-y-0 print:hidden">
-    <i id="syncStatusIcon" class="ph-fill ph-cloud-slash text-yellow-400 text-xl"></i>
-    <span id="syncStatusText">1 registro pendiente...</span>
-  </div>
+<body class="bg-gray-50 dark:bg-gray-900 min-h-screen text-gray-800 dark:text-gray-100 font-['Inter'] transition-colors duration-200">
 
-  <div id="appContainer" class="hidden p-4 md:p-8 max-w-6xl mx-auto space-y-6 fade-in">
-
-    <header id="mainHeader"
-      class="bg-white dark:bg-gray-800 p-4 md:p-6 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 flex flex-col gap-3 md:gap-4 print:hidden transition-colors">
-
-      <div class="flex items-center justify-between">
-        <div class="flex items-center gap-3 md:gap-4">
-          <div class="hidden md:flex items-center justify-center w-12 h-12 bg-green-50 dark:bg-green-900/30 rounded-lg">
-            <i class="ph-fill ph-recycle text-green-600 dark:text-green-400 text-3xl"></i>
+  <div id="appContainer">
+    <header class="bg-blue-900 dark:bg-gray-950 text-white shadow-lg sticky top-0 z-40 transition-colors duration-200 border-b dark:border-gray-800">
+      <div class="container mx-auto px-4 py-4 md:py-6">
+        <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          <div class="flex items-center space-x-4">
+            <div class="w-12 h-12 bg-white/10 backdrop-blur-sm border border-white/20 rounded-lg flex items-center justify-center">
+              <svg class="w-7 h-7 text-white" fill="currentColor" viewBox="0 0 20 20"><path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" /><path fill-rule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clip-rule="evenodd" /></svg>
+            </div>
+            <div>
+              <h1 class="text-2xl font-bold tracking-tight">Sistema POE</h1>
+              <p class="text-blue-200 dark:text-gray-400 text-sm font-medium">La Genovesa Agroindustrias S.A.</p>
+            </div>
           </div>
-          <div>
-            <h1 class="text-lg md:text-2xl font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-              Gestión de Residuos
-            </h1>
-            <p id="txt-usuario-activo"
-              class="text-gray-500 dark:text-gray-400 text-xs md:text-sm mt-0.5 md:mt-1 flex items-center gap-1">
-              <i class="ph ph-spinner animate-spin inline-block"></i> Esperando autorización...
-            </p>
-          </div>
-        </div>
+          <div class="flex items-center space-x-3 w-full md:w-auto justify-between md:justify-end">
+            <div class="flex items-center space-x-2 bg-white/10 px-3 py-1.5 rounded-full border border-white/20">
+              <div id="network-indicator" class="w-2.5 h-2.5 rounded-full bg-green-400 shadow-[0_0_8px_rgba(74,222,128,0.8)]"></div>
+              <span id="network-text" class="text-xs font-semibold tracking-wide">ONLINE</span>
+            </div>
+            
+            <button type="button" id="btnForceSync" onclick="window.forceSync()" class="bg-blue-800 hover:bg-blue-700 dark:bg-gray-800 dark:hover:bg-gray-700 text-white px-4 py-2.5 rounded-lg font-bold shadow-md transition text-sm flex items-center space-x-2">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+              <span class="hidden md:inline">Sincronizar</span>
+            </button>
 
-        <div class="text-right flex items-center">
-          <button id="btnForceSync"
-            class="flex bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700 px-3 py-1.5 rounded-lg items-center gap-2 text-sm font-medium transition-all shadow-sm hover:bg-gray-100 dark:hover:bg-gray-700/80">
-            <i class="ph ph-arrows-clockwise text-lg inline-block" id="iconForceSync"></i>
-            <span class="hidden sm:inline" id="txtForceSync">Actualizar</span>
-            <span class="hidden bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full"
-              id="countForceSync">0</span>
-          </button>
+            <button type="button" id="btn-mapa-areas" onclick="window.openAreasModal()" class="bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200 px-4 py-2.5 rounded-lg font-bold shadow-sm border border-gray-300 dark:border-gray-600 transition flex items-center space-x-2 hidden">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"></path></svg>
+              <span class="hidden md:inline">Mapa Áreas</span>
+            </button>
+
+            <button type="button" id="btn-nuevo-poe" onclick="window.openModal()" class="bg-white dark:bg-blue-600 text-blue-900 dark:text-white hover:bg-blue-50 dark:hover:bg-blue-700 focus:ring-4 focus:ring-blue-300 dark:focus:ring-blue-800 px-6 py-2.5 rounded-lg font-bold shadow-md transition flex items-center space-x-2 hidden">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" /></svg>
+              <span>Nuevo POE</span>
+            </button>
+          </div>
         </div>
       </div>
-
-      <nav
-        class="flex gap-4 md:gap-6 mt-1 border-b border-gray-200 dark:border-gray-700 overflow-x-auto whitespace-nowrap scrollbar-hide">
-        <button id="tabRegistro"
-          class="pb-2 text-green-600 dark:text-green-400 border-b-2 border-green-600 dark:border-green-400 font-medium transition-colors flex items-center gap-1 md:gap-2 text-sm md:text-base px-1">
-          <i class="ph ph-note-pencil text-lg"></i> Registro
-        </button>
-        <button id="tabRevision"
-          class="pb-2 text-gray-500 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 font-medium transition-colors flex items-center gap-1 md:gap-2 text-sm md:text-base px-1">
-          <i class="ph ph-table text-lg"></i> Mis Registros
-        </button>
-        <button id="tabDashboard"
-          class="pb-2 text-gray-500 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 font-medium transition-colors flex items-center gap-1 md:gap-2 text-sm md:text-base px-1">
-          <i class="ph ph-chart-bar text-lg"></i> Dashboard
-        </button>
-      </nav>
-
     </header>
 
-    <div id="vistaRegistro" class="grid grid-cols-1 lg:grid-cols-3 gap-6 fade-in print:hidden">
-      <div class="lg:col-span-2">
-        <div
-          class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden transition-colors">
-          <div class="bg-green-600 dark:bg-green-700 px-6 py-4 flex items-center justify-between">
-            <h2 class="text-white font-semibold text-lg flex items-center gap-2">
-              <i class="ph ph-file-text text-xl"></i> Nuevo Registro
-            </h2>
+    <main class="container mx-auto px-4 py-8">
+      
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6 mb-8">
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-5 md:p-6 fade-in"><p class="text-gray-500 dark:text-gray-400 text-xs md:text-sm font-semibold uppercase tracking-wider">Total POEs</p><p class="text-2xl md:text-3xl font-bold text-gray-800 dark:text-white mt-1" id="totalPOEs">0</p></div>
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-5 md:p-6 fade-in"><p class="text-gray-500 dark:text-gray-400 text-xs md:text-sm font-semibold uppercase tracking-wider">Producción</p><p class="text-2xl md:text-3xl font-bold text-green-600 dark:text-green-400 mt-1" id="produccionCount">0</p></div>
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-5 md:p-6 fade-in"><p class="text-gray-500 dark:text-gray-400 text-xs md:text-sm font-semibold uppercase tracking-wider">Logística</p><p class="text-2xl md:text-3xl font-bold text-blue-600 dark:text-blue-400 mt-1" id="logisticaCount">0</p></div>
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-5 md:p-6 fade-in"><p class="text-gray-500 dark:text-gray-400 text-xs md:text-sm font-semibold uppercase tracking-wider">Calidad</p><p class="text-2xl md:text-3xl font-bold text-purple-600 dark:text-purple-400 mt-1" id="calidadCount">0</p></div>
+      </div>
+
+      <section class="bg-white dark:bg-gray-800 rounded-xl shadow-sm overflow-hidden fade-in border border-gray-100 dark:border-gray-700">
+        <div class="px-6 py-5 border-b border-gray-100 dark:border-gray-700 flex flex-col md:flex-row md:items-center justify-between gap-4 bg-gray-50/50 dark:bg-gray-800/50">
+          <h2 class="text-lg font-bold text-gray-800 dark:text-white">Matriz de Procedimientos Operativos</h2>
+          <div class="relative w-full md:max-w-xs">
+            <input type="text" id="searchInput" placeholder="Buscar código o título..." class="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none transition" oninput="window.refreshUI()">
+            <svg class="w-4 h-4 text-gray-400 dark:text-gray-500 absolute left-3 top-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+          </div>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse whitespace-nowrap">
+            <thead class="bg-gray-50 dark:bg-gray-900/50 border-b border-gray-200 dark:border-gray-700">
+              <tr>
+                <th class="px-6 py-4 text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Código</th>
+                <th class="px-6 py-4 text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Título</th>
+                <th class="px-6 py-4 text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Macro-Área</th>
+                <th class="px-6 py-4 text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Estado Red</th>
+                <th class="px-6 py-4 text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider text-right">Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="table-body" class="divide-y divide-gray-100 dark:divide-gray-700 text-gray-800 dark:text-gray-200"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <div id="modal" role="dialog" class="fixed inset-0 bg-gray-50 dark:bg-gray-900 hidden z-50 slide-in">
+      <div class="h-screen w-full flex flex-col relative">
+        <div class="flex-shrink-0 z-40 shadow-sm flex flex-col">
+          <div class="px-6 md:px-10 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between bg-white dark:bg-gray-800">
+            <div class="flex items-center space-x-4">
+              <button type="button" onclick="window.closeModal()" class="text-gray-500 dark:text-gray-400 hover:text-blue-700 dark:hover:text-blue-400 bg-gray-100 dark:bg-gray-700 hover:bg-blue-50 dark:hover:bg-gray-600 transition p-2.5 rounded-full" title="Volver al Panel">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+              </button>
+              <h3 id="modalTitle" class="text-2xl font-black text-blue-900 dark:text-white tracking-tight">Registrar Procedimiento</h3>
+            </div>
+            <button type="button" onclick="window.closeModal()" class="text-gray-400 dark:text-gray-500 hover:text-red-500 bg-gray-50 dark:bg-gray-700 hover:bg-red-50 dark:hover:bg-red-900/30 transition p-2.5 rounded-full border border-gray-100 dark:border-gray-600">
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+            </button>
           </div>
 
-          <form id="residuosForm" class="p-6 space-y-6">
-
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div class="space-y-2">
-                <label class="text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center gap-2">
-                  <i class="ph ph-calendar text-gray-400 text-lg"></i> Fecha de Registro
-                </label>
-                <input type="date" id="fechaRegistro" required
-                  class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-green-500 outline-none transition-all bg-white dark:bg-gray-700 dark:text-white">
-              </div>
-
-              <div class="space-y-2">
-                <label class="text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center gap-2">
-                  <i class="ph ph-clock text-gray-400 text-lg"></i> Hora Exacta
-                </label>
-                <input type="time" id="horaRegistro" step="1" required
-                  class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-green-500 outline-none transition-all bg-white dark:bg-gray-700 dark:text-white">
-              </div>
+          <div class="flex flex-wrap items-center bg-gray-50 dark:bg-gray-900 border-b border-gray-300 dark:border-gray-700 px-6 md:px-10 py-1.5 gap-1 md:gap-3 text-gray-700 dark:text-gray-300 w-full overflow-x-auto shadow-sm">
+            <div class="flex items-center space-x-1 border-r border-gray-300 dark:border-gray-700 pr-2 md:pr-3">
+                <button type="button" class="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-800 rounded" onmousedown="event.preventDefault(); document.execCommand('bold', false, null)" title="Negrita"><b>B</b></button>
+                <button type="button" class="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-800 rounded" onmousedown="event.preventDefault(); document.execCommand('italic', false, null)" title="Cursiva"><i>I</i></button>
+                <button type="button" class="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-800 rounded" onmousedown="event.preventDefault(); document.execCommand('underline', false, null)" title="Subrayado"><u>U</u></button>
             </div>
-
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div class="space-y-2">
-                <label class="text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center gap-2">
-                  <i class="ph ph-map-pin text-gray-400 text-lg"></i> Área de Origen
+            <div class="flex items-center space-x-1 border-r border-gray-300 dark:border-gray-700 pr-2 md:pr-3">
+                <label class="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-800 rounded cursor-pointer relative flex items-center" title="Color de Texto">
+                   <span class="font-bold underline decoration-red-500">A</span>
+                   <input type="color" class="absolute opacity-0 w-full h-full cursor-pointer" onchange="document.execCommand('foreColor', false, this.value)">
                 </label>
-                <select id="area" name="area" required
-                  class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-green-500 outline-none transition-all bg-white dark:bg-gray-700 dark:text-white">
-                  <option value="" disabled selected>Seleccione...</option>
-                  <option value="Almacen PT">Almacen PT</option>
-                  <option value="Almacen MP">Almacen MP</option>
-                  <option value="Desposte">Desposte</option>
-                  <option value="Empaque">Empaque</option>
-                  <option value="Madurado">Madurado</option>
-                  <option value="Produccion">Produccion</option>
-                  <option value="Residuos por Control de Calidad">Control Calidad</option>
-                  <option value="Saneamiento">Saneamiento</option>
-                  <option value="Skin">Skin</option>
-                  <option value="Otra">Otra...</option>
-                </select>
-              </div>
+                <label class="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-800 rounded cursor-pointer relative flex items-center" title="Color de Resaltado">
+                   <span class="font-bold bg-yellow-300 text-black px-0.5">ab</span>
+                   <input type="color" class="absolute opacity-0 w-full h-full cursor-pointer" onchange="document.execCommand('hiliteColor', false, this.value)">
+                </label>
             </div>
-
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div class="space-y-2">
-                <label class="text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center gap-2">
-                  <i class="ph ph-recycle text-gray-400 text-lg"></i> Tipo de Residuo
-                </label>
-                <select id="tipo" name="tipo" required
-                  class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-green-500 outline-none transition-all bg-white dark:bg-gray-700 dark:text-white">
-                  <option value="Organico">Organico</option>
-                  <option value="Plastico">Plastico</option>
-                  <option value="Carton/Papel">Carton/Papel</option>
-                  <option value="Generales/Basura">Generales/Basura</option>
-                </select>
-              </div>
-              <div class="space-y-2">
-                <label class="text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center gap-2">
-                  <i class="ph ph-scales text-gray-400 text-lg"></i> Peso (Kg)
-                </label>
-                <input type="number" id="peso" name="peso" step="0.01" min="0" placeholder="0.00" required
-                  class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-green-500 outline-none transition-all bg-white dark:bg-gray-700 dark:text-white">
-              </div>
-              <div class="space-y-2">
-                <label class="text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center gap-2">
-                  <i class="ph ph-shopping-bag text-gray-400 text-lg"></i> Bolsas Usadas
-                </label>
-                <input type="number" id="bolsas" name="bolsas" step="1" min="0" value="1" required
-                  class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-green-500 outline-none transition-all bg-white dark:bg-gray-700 dark:text-white">
-              </div>
+            <div class="flex items-center space-x-1 border-r border-gray-300 dark:border-gray-700 pr-2 md:pr-3">
+                <button type="button" class="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-800 rounded" onmousedown="event.preventDefault(); document.execCommand('justifyLeft', false, null)" title="Alinear Izquierda"><svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M3 21h18v-2H3v2zm0-4h12v-2H3v2zm0-4h18v-2H3v2zm0-4h12V7H3v2zm0-6v2h18V3H3z"></path></svg></button>
+                <button type="button" class="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-800 rounded" onmousedown="event.preventDefault(); document.execCommand('justifyCenter', false, null)" title="Centrar"><svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M7 15v2h10v-2H7zm-4 6h18v-2H3v2zm0-8h18v-2H3v2zm4-6v2h10V7H7zM3 3v2h18V3H3z"></path></svg></button>
             </div>
+            <div class="flex items-center space-x-1 border-r border-gray-300 dark:border-gray-700 pr-2 md:pr-3">
+                <button type="button" class="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-800 rounded flex items-center gap-1" onmousedown="event.preventDefault(); document.execCommand('insertUnorderedList', false, null)" title="Viñetas"><svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M4 10.5c-.83 0-1.5.67-1.5 1.5s.67 1.5 1.5 1.5 1.5-.67 1.5-1.5-.67-1.5-1.5-1.5zm0-6c-.83 0-1.5.67-1.5 1.5S3.17 7.5 4 7.5 5.5 6.83 5.5 6 4.83 4.5 4 4.5zm0 12c-.83 0-1.5.68-1.5 1.5s.68 1.5 1.5 1.5 1.5-.68 1.5-1.5-.67-1.5-1.5-1.5zM7 19h14v-2H7v2zm0-6h14v-2H7v2zm0-8v2h14V5H7z"></path></svg></button>
+                <button type="button" class="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-800 rounded font-bold text-[10px]" onmousedown="event.preventDefault(); document.execCommand('insertOrderedList', false, null); window.setListType('1')" title="Lista Numerada">1.</button>
+                <button type="button" class="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-800 rounded font-bold text-[10px]" onmousedown="event.preventDefault(); document.execCommand('insertOrderedList', false, null); window.setListType('a')" title="Lista Alfabética">a)</button>
+            </div>
+            <div class="flex items-center space-x-1 border-r border-gray-300 dark:border-gray-700 pr-2 md:pr-3">
+                <button type="button" class="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-800 rounded" onmousedown="event.preventDefault(); document.execCommand('outdent', false, null)" title="Reducir Sangría"><svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M11 17h10v-2H11v2zm-8-5l4 4V8l-4 4zm0 9h18v-2H3v2zM3 3v2h18V3H3zm8 6h10V7H11v2zm0 4h10v-2H11v2z"></path></svg></button>
+                <button type="button" class="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-800 rounded" onmousedown="event.preventDefault(); document.execCommand('indent', false, null)" title="Aumentar Sangría"><svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M3 21h18v-2H3v2zM3 8v8l4-4-4-4zm8 9h10v-2H11v2zM3 3v2h18V3H3zm8 6h10V7H11v2zm0 4h10v-2H11v2z"></path></svg></button>
+            </div>
+            <div class="flex items-center space-x-1">
+                <button type="button" class="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-800 rounded font-bold text-[10px] uppercase" onmousedown="event.preventDefault(); document.execCommand('formatBlock', false, 'H3')" title="Título">T</button>
+                <button type="button" class="p-1.5 hover:bg-red-100 dark:hover:bg-red-900/40 text-red-500 rounded" onmousedown="event.preventDefault(); document.execCommand('removeFormat', false, null)" title="Borrar Formato"><svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4c-1.48 0-2.85.43-4.01 1.17l1.46 1.46C10.21 6.23 11.08 6 12 6c3.04 0 5.5 2.46 5.5 5.5v.5H19c1.66 0 3 1.34 3 3 0 1.13-.64 2.11-1.56 2.62l1.45 1.45C23.16 18.16 24 16.68 24 15c0-2.64-2.05-4.78-4.65-4.96zM3 5.27l2.75 2.74C3.56 8.79 2 10.82 2 13c0 3.31 2.69 6 6 6h11.73l2 2L23 19.73 4.27 1 3 5.27zM7.73 10l8 8H8c-2.21 0-4-1.79-4-4s1.79-4 3.73-4z"></path></svg></button>
+            </div>
+          </div>
+        </div>
 
-            <div class="space-y-2">
-              <label class="text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center gap-2">
-                <i class="ph ph-camera text-gray-400 text-lg"></i> Evidencia Fotográfica
-              </label>
-              <div
-                class="mt-1 p-4 border-2 border-gray-300 dark:border-gray-600 border-dashed rounded-lg hover:border-green-500 transition-colors bg-gray-50 dark:bg-gray-700/50 flex flex-col items-center justify-center min-h-[160px] relative">
-                <div id="imagePlaceholder" class="space-y-2 text-center w-full">
-                  <i class="ph ph-camera mx-auto text-4xl text-gray-400 dark:text-gray-500"></i>
-                  <div class="flex text-sm justify-center">
-                    <label for="imagen"
-                      class="relative cursor-pointer bg-white dark:bg-gray-800 rounded-md font-medium text-green-600 dark:text-green-400 hover:text-green-500 px-3 py-2 border border-green-200 dark:border-gray-600 shadow-sm transition-all hover:shadow">
-                      <span><i class="ph ph-camera-plus mr-1"></i> Tomar foto o subir</span>
-                      <input id="imagen" name="imagen" type="file" class="sr-only" accept="image/*"
-                        capture="environment">
-                    </label>
+        <div class="flex-1 overflow-y-auto w-full pb-20">
+          <div class="max-w-6xl mx-auto mt-6">
+            <form id="poe-form" onsubmit="window.handleFormSubmit(event)" class="px-4 md:px-10 space-y-8">
+              
+              <div class="bg-white dark:bg-gray-800 p-6 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm">
+                <h4 class="font-black text-gray-800 dark:text-gray-100 border-b-2 border-gray-100 dark:border-gray-700 pb-3 mb-5 uppercase tracking-wide text-sm">1. Datos de Control Documental</h4>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                  <div>
+                    <label class="block text-xs font-bold text-gray-600 dark:text-gray-400 mb-2 uppercase">Macro-Área *</label>
+                    <select id="category" required onchange="window.updateSubCategories()" class="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none transition">
+                      <option value="" disabled selected>Seleccione...</option>
+                    </select>
                   </div>
-                  <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">Formatos soportados: PNG, JPG</p>
+                  <div>
+                    <label class="block text-xs font-bold text-gray-600 dark:text-gray-400 mb-2 uppercase">Sub-Área *</label>
+                    <select id="poeSubCategory" required onchange="window.generatePoeCode()" class="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none transition">
+                      <option value="" disabled selected>Seleccione área...</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="block text-xs font-bold text-blue-600 dark:text-blue-400 mb-2 uppercase">Código Generado 🔒</label>
+                    <input type="text" id="code" required readonly class="w-full px-4 py-3 border border-blue-200 dark:border-gray-600 rounded-lg shadow-inner bg-blue-50 dark:bg-gray-800 text-blue-800 dark:text-blue-400 font-mono font-bold outline-none cursor-not-allowed">
+                  </div>
                 </div>
-                <div id="imagePreviewContainer" class="hidden flex-col items-center w-full">
-                  <img id="imagePreview" src="" alt="Vista previa de evidencia"
-                    class="max-h-48 object-contain rounded-md shadow-sm border border-gray-200 mb-3">
-                  <p id="fileNameDisplay"
-                    class="text-sm font-medium text-green-600 dark:text-green-400 truncate max-w-[250px] mb-2"></p>
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+                  <div class="md:col-span-2">
+                    <label class="block text-xs font-bold text-gray-600 dark:text-gray-400 mb-2 uppercase">Título del Procedimiento *</label>
+                    <input type="text" id="title" required class="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none transition" placeholder="[Acción] + [Proceso/Equipo] + [Condición]">
+                  </div>
+                  <div>
+                    <label class="block text-xs font-bold text-gray-600 dark:text-gray-400 mb-2 uppercase">Versión</label>
+                    <input type="text" id="poeVersion" class="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white outline-none font-mono text-center font-bold" value="1.0">
+                  </div>
+                  <div>
+                    <label class="block text-xs font-bold text-gray-600 dark:text-gray-400 mb-2 uppercase">Estado</label>
+                    <select id="poeStatus" class="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none">
+                      <option value="ACT">Activo</option>
+                      <option value="REV">En Revisión</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
 
-                  <div class="flex gap-2">
-                    <button type="button" id="removeImageBtn"
-                      class="text-sm text-red-500 hover:text-red-700 font-medium flex items-center gap-1 px-3 py-2 rounded-md hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors border border-transparent hover:border-red-100">
-                      <i class="ph ph-trash"></i> Eliminar foto
+              <div class="bg-white dark:bg-gray-800 p-6 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm">
+                <h4 class="font-black text-gray-800 dark:text-gray-100 border-b-2 border-gray-100 dark:border-gray-700 pb-3 mb-5 uppercase tracking-wide text-sm">2. Contexto y Alcance</h4>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div><label class="block text-xs font-bold text-gray-600 dark:text-gray-400 mb-2 uppercase">Objetivo General *</label>
+                  <div id="objective" class="rich-editor w-full border border-gray-300 dark:border-gray-600 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none shadow-sm bg-white dark:bg-gray-700 dark:text-white rich-text-content" contenteditable="true" 
+                  data-placeholder="► Instrucción: Defina el propósito fundamental del documento.&#10;► Estructura: [Qué se hace] + [Mediante qué método] + [Con qué fin normativo].&#10;► Ejemplo: Establecer los pasos estandarizados para el desposte mediante control de temperatura para evitar proliferación bacteriana."></div></div>
+                  
+                  <div><label class="block text-xs font-bold text-gray-600 dark:text-gray-400 mb-2 uppercase">Alcance Operativo *</label>
+                  <div id="scope" class="rich-editor w-full border border-gray-300 dark:border-gray-600 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none shadow-sm bg-white dark:bg-gray-700 dark:text-white rich-text-content" contenteditable="true" 
+                  data-placeholder="► Instrucción: Delimite las fronteras físicas y operativas.&#10;► Estructura: Inicia en [Paso/Área A] y finaliza en [Paso/Área B], aplicando a [Personal/Líneas].&#10;► Ejemplo: Inicia en recepción de carcasas y finaliza en el almacenamiento, aplicando a la Línea 1."></div></div>
+                  
+                  <div><label class="block text-xs font-bold text-gray-600 dark:text-gray-400 mb-2 uppercase">Responsabilidades *</label>
+                  <div id="responsibles" class="rich-editor w-full border border-gray-300 dark:border-gray-600 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none shadow-sm bg-white dark:bg-gray-700 dark:text-white rich-text-content" contenteditable="true" 
+                  data-placeholder="► Instrucción: Desglose los cargos involucrados.&#10;► Estructura: [Cargo Oficial]: [Rol en ejecución o verificación].&#10;► Ejemplo: Operario de Máquina: Ejecuta el corte. / Supervisor: Verifica parámetros."></div></div>
+                  
+                  <div><label class="block text-xs font-bold text-gray-600 dark:text-gray-400 mb-2 uppercase">Definiciones (Glosario)</label>
+                  <div id="definitions" class="rich-editor w-full border border-gray-300 dark:border-gray-600 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none shadow-sm bg-white dark:bg-gray-700 dark:text-white rich-text-content" contenteditable="true" 
+                  data-placeholder="► Instrucción: Liste términos técnicos o siglas.&#10;► Estructura: [Término/Sigla]: [Definición concisa].&#10;► Ejemplo: PCC: Punto Crítico de Control. / Merma: Pérdida de peso."></div></div>
+                  
+                  <div class="md:col-span-2"><label class="block text-xs font-bold text-gray-600 dark:text-gray-400 mb-2 uppercase">Equipos, Materiales y EPPs</label>
+                  <div id="materials" class="rich-editor w-full border border-gray-300 dark:border-gray-600 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none shadow-sm bg-white dark:bg-gray-700 dark:text-white rich-text-content" contenteditable="true" 
+                  data-placeholder="► Instrucción: Enumere herramientas, maquinaria y EPPs requeridos.&#10;► Estructura: • [Elemento] (Especificación técnica si aplica).&#10;► Ejemplo: • Termómetro de punzón calibrado. • Guantes de malla de acero anticorte."></div></div>
+                </div>
+              </div>
+
+              <div class="bg-white dark:bg-gray-800 p-6 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm">
+              <div class="flex flex-col md:flex-row md:items-center justify-between border-b-2 border-gray-100 dark:border-gray-700 pb-3 mb-5 gap-3">
+                <h4 class="font-black text-gray-800 dark:text-gray-100 uppercase tracking-wide text-sm">3. Desarrollo del Procedimiento Operativo</h4>
+                
+                <button type="button" id="btnTemplatePOES" onclick="window.loadPoesTemplate()" class="hidden bg-amber-100 hover:bg-amber-200 dark:bg-amber-900/30 dark:hover:bg-amber-900/50 text-amber-800 dark:text-amber-400 px-3 py-1.5 rounded-lg text-[10px] font-black transition-all items-center gap-1 border border-amber-200 dark:border-amber-800">
+                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"></path></svg>
+                   CARGAR 7 PASOS DE SANEAMIENTO (POES)
+                </button>
+              </div>
+              
+              <div class="bg-blue-50/40 dark:bg-gray-900/40 p-5 rounded-xl border border-blue-100 dark:border-gray-700 mb-6 transition-all hover:shadow-md">
+                <div class="mb-5">
+                    <label class="block text-[10px] font-bold text-blue-800 dark:text-blue-400 mb-2 uppercase tracking-wider">Instrucción del Paso Operativo</label>
+                    <div id="stepDesc" class="rich-editor w-full border border-blue-200 dark:border-gray-600 rounded-lg p-3.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none shadow-inner bg-white dark:bg-gray-700 dark:text-white rich-text-content transition-all" contenteditable="true" 
+                    data-placeholder="► Instrucción: Describa la acción operativa en modo imperativo.&#10;► Estructura: [Verbo] + [Parámetro/Elemento] + [Condición/Límite].&#10;► Ejemplo: Insertar la sonda del termómetro en el centro térmico asegurando T° < 4°C."></div>
+                </div>
+                
+                <div class="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
+                  <div class="md:col-span-4 lg:col-span-3">
+                    <label class="block text-[10px] font-bold text-blue-800 dark:text-blue-400 mb-1.5 uppercase tracking-wider">Tipo de Control</label>
+                    <select id="stepType" class="w-full px-3 py-2.5 border border-blue-200 dark:border-gray-600 rounded-lg text-sm font-bold shadow-sm outline-none bg-white dark:bg-gray-700 dark:text-white cursor-pointer hover:border-blue-400 transition-colors">
+                      <option value="INFO">📝 Inst. Operativa</option>
+                      <option value="PC">⚠️ Control (PC)</option>
+                      <option value="PCC" class="text-red-600 dark:text-red-400">🛑 Crítico (PCC)</option>
+                      <option value="SEG">🛡️ Seguridad</option>
+                    </select>
+                  </div>
+                  
+                  <div class="md:col-span-4 lg:col-span-6 relative">
+                    <label class="block text-[10px] font-bold text-blue-800 dark:text-blue-400 mb-1.5 uppercase tracking-wider">Evidencia Visual</label>
+                    <input type="file" id="stepImage" accept="image/*" capture="environment" onchange="window.updateFileText(this)" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 mt-5">
+                    <div class="bg-white dark:bg-gray-700 border border-dashed border-blue-300 dark:border-gray-500 hover:border-blue-500 dark:hover:border-blue-400 hover:bg-blue-50 dark:hover:bg-gray-600 rounded-lg py-2.5 px-4 text-center transition-all cursor-pointer shadow-sm flex items-center justify-center gap-2">
+                      <svg class="w-4 h-4 text-blue-500 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                      <span id="fileNameDisplay" class="text-xs font-semibold text-blue-700 dark:text-blue-400 truncate">Foto Cámara o Archivo...</span>
+                    </div>
+                  </div>
+
+                  <div class="md:col-span-4 lg:col-span-3">
+                    <button type="button" id="btnAddStep" onclick="window.addAdvancedStep()" class="w-full bg-blue-600 hover:bg-blue-800 dark:bg-blue-600 dark:hover:bg-blue-500 text-white px-4 py-2.5 rounded-lg font-bold text-sm shadow-md transition transform hover:-translate-y-0.5 flex items-center justify-center gap-2">
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"></path></svg>
+                      <span id="btnAddStepText">Añadir Paso</span>
                     </button>
                   </div>
                 </div>
               </div>
+
+              <div id="advancedStepsList" class="space-y-3 max-h-[500px] overflow-y-auto p-4 bg-gray-50 dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 shadow-inner rich-text-content">
+                </div>
             </div>
 
-            <div class="space-y-2">
-              <label class="text-sm font-medium text-gray-700 dark:text-gray-300">Observaciones</label>
-              <textarea id="observaciones" name="observaciones" rows="3"
-                placeholder="Ej. 1 saco, aserrín de pasta, etc."
-                class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-green-500 outline-none transition-all resize-none bg-white dark:bg-gray-700 dark:text-white"></textarea>
-            </div>
+              <div class="bg-white dark:bg-gray-800 p-6 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm">
+                <h4 class="font-black text-gray-800 dark:text-gray-100 border-b-2 border-gray-100 dark:border-gray-700 pb-3 mb-5 uppercase tracking-wide text-sm">4. Monitoreo, Control y Referencias</h4>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div><label class="block text-xs font-bold text-gray-600 dark:text-gray-400 mb-2 uppercase">Frecuencia de Monitoreo *</label>
+                  <div id="monitoring" class="rich-editor w-full border border-gray-300 dark:border-gray-600 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none shadow-sm bg-white dark:bg-gray-700 dark:text-white rich-text-content" contenteditable="true" 
+                  data-placeholder="► Instrucción: Describa la vigilancia de los límites de control.&#10;► Estructura: [Qué se mide] + [Cómo se mide] + [Frecuencia] + [Responsable].&#10;► Ejemplo: Medición de temperatura mediante punzón cada 2 horas por Calidad."></div></div>
+                  
+                  <div><label class="block text-xs font-bold text-gray-600 dark:text-gray-400 mb-2 uppercase">Acciones Correctivas (Desvíos) *</label>
+                  <div id="correctiveActions" class="rich-editor w-full border border-gray-300 dark:border-gray-600 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none shadow-sm bg-white dark:bg-gray-700 dark:text-white rich-text-content" contenteditable="true" 
+                  data-placeholder="► Instrucción: Defina acciones ante una desviación.&#10;► Estructura: Si [Desviación], entonces [Acción de contención] y reportar a [Cargo].&#10;► Ejemplo: Si supera los 4°C, detener la línea y reportar a Jefatura de Calidad."></div></div>
+                  
+                  <div><label class="block text-xs font-bold text-gray-600 dark:text-gray-400 mb-2 uppercase">Registros Asociados (Formatos)</label>
+                  <div id="records" class="rich-editor w-full border border-gray-300 dark:border-gray-600 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none shadow-sm bg-white dark:bg-gray-700 dark:text-white rich-text-content" contenteditable="true" 
+                  data-placeholder="► Instrucción: Declare formatos de evidencia u operacionales.&#10;► Estructura: [Código] - [Nombre del Formato]&#10;► Ejemplo: F-PROD-05 - Registro de T° Cocción."></div></div>
+                  
+                  <div><label class="block text-xs font-bold text-gray-600 dark:text-gray-400 mb-2 uppercase">Referencias Normativas y Anexos</label>
+                  <div id="references" class="rich-editor w-full border border-gray-300 dark:border-gray-600 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none shadow-sm bg-white dark:bg-gray-700 dark:text-white rich-text-content" contenteditable="true" 
+                  data-placeholder="► Instrucción: Cite base legal o manual técnico.&#10;► Estructura: [Norma/Ley/Manual] - [Artículo pertinente]&#10;► Ejemplo: RM N° 087-2008/MINSA - Norma Sanitaria."></div></div>
+                </div>
+              </div>
 
-            <div class="pt-4 flex items-center justify-between">
-              <span id="successMessage"
-                class="flex items-center text-green-600 dark:text-green-400 font-medium opacity-0 transition-opacity duration-300">
-                <i class="ph-fill ph-check-circle text-xl mr-2"></i> ¡Guardado exitosamente!
-              </span>
-              <button type="submit" id="submitBtn"
-                class="bg-green-600 hover:bg-green-700 dark:bg-green-500 dark:hover:bg-green-600 text-white font-medium py-3 px-8 rounded-lg shadow-sm hover:shadow-md transition-all flex items-center gap-2 focus:ring-4 focus:ring-green-200 disabled:opacity-70 disabled:cursor-not-allowed">
-                <i class="ph ph-floppy-disk text-xl"></i>
-                <span>Guardar Registro</span>
+              <div class="flex flex-col-reverse sm:flex-row justify-end sm:space-x-4 pt-4 pb-4">
+                <button type="button" onclick="window.closeModal()" class="w-full sm:w-auto px-8 py-3.5 border-2 border-gray-200 dark:border-gray-600 rounded-xl font-bold text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 transition mt-3 sm:mt-0">Cancelar Edición</button>
+                <button type="submit" class="w-full sm:w-auto bg-green-600 hover:bg-green-700 dark:bg-green-600 dark:hover:bg-green-500 transition px-10 py-3.5 rounded-xl text-white font-black shadow-lg transform hover:-translate-y-0.5 tracking-wide text-lg flex items-center justify-center space-x-2">
+                  <span>Firmar y Guardar POE</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="areasModal" role="dialog" class="fixed inset-0 bg-gray-50 dark:bg-gray-900 hidden z-50 overflow-y-auto slide-in">
+      <div class="bg-gray-50 dark:bg-gray-900 min-h-screen w-full flex flex-col relative">
+        
+        <div class="px-6 md:px-10 py-4 border-b border-gray-200 dark:border-gray-700 flex flex-col sm:flex-row items-center justify-between sticky top-0 bg-white/95 dark:bg-gray-800/95 backdrop-blur-sm z-30 shadow-sm gap-4">
+          <div class="flex items-center space-x-4 w-full sm:w-auto">
+            <button type="button" onclick="window.closeAreasModal()" class="text-gray-500 dark:text-gray-400 hover:text-blue-700 dark:hover:text-blue-400 bg-gray-100 dark:bg-gray-700 hover:bg-blue-50 dark:hover:bg-gray-600 transition p-2.5 rounded-full">
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+            </button>
+           <div>
+              <h3 class="text-2xl font-black text-blue-900 dark:text-white tracking-tight">Mapa de Áreas (Plantas)</h3>
+        
+              <button onclick="window.openAreaForm()" class="bg-blue-600 hover:bg-blue-700 text-white text-[10px] uppercase font-bold px-3 py-1.5 rounded-lg shadow-sm transition-colors flex items-center gap-1">
+                 <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"></path></svg> Nueva Área
               </button>
             </div>
-          </form>
-        </div>
-      </div>
-
-      <div class="lg:col-span-1 space-y-6">
-        <div class="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700">
-          <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center gap-2">
-            <i class="ph ph-list-bullets text-gray-500 text-xl"></i> Registros Recientes
-          </h3>
-          <div id="registrosContainer" class="space-y-4 max-h-[600px] overflow-y-auto pr-2">
-            <div class="text-center text-gray-500 text-sm py-4 italic">
-              Los registros guardados en esta sesión aparecerán aquí.
+            
+          </div>
+          <div class="flex items-center space-x-3 w-full sm:w-auto justify-end">
+            <div id="area-filters" class="flex flex-wrap gap-1 bg-gray-100 dark:bg-gray-800 p-1 rounded-xl border border-gray-200 dark:border-gray-700">
+                <button onclick="window.setAreaFilter('PROD')" data-macro="PROD" class="filter-pill px-4 py-1.5 rounded-lg text-[10px] font-black transition-all">PRODUCCIÓN</button>
+                <button onclick="window.setAreaFilter('LOG')" data-macro="LOG" class="filter-pill px-4 py-1.5 rounded-lg text-[10px] font-black transition-all">LOGÍSTICA</button>
+                <button onclick="window.setAreaFilter('CAL')" data-macro="CAL" class="filter-pill px-4 py-1.5 rounded-lg text-[10px] font-black transition-all">CALIDAD</button>
+                <button onclick="window.setAreaFilter('SAN')" data-macro="SAN" class="filter-pill px-4 py-1.5 rounded-lg text-[10px] font-black transition-all">SANEAMIENTO</button>
+                <button onclick="window.setAreaFilter('MANT')" data-macro="MANT" class="filter-pill px-4 py-1.5 rounded-lg text-[10px] font-black transition-all">MANTENIMIENTO</button>
             </div>
           </div>
-        </div>
-      </div>
-    </div>
-
-    <div id="vistaDashboard" class="hidden space-y-6 fade-in">
-      <div id="dashboardLoading"
-        class="hidden flex-col items-center justify-center py-24 bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 w-full fade-in print:hidden">
-        <div class="relative flex items-center justify-center mb-4">
-          <div class="absolute inset-0 rounded-full border-4 border-gray-100 dark:border-gray-700"></div>
-          <div
-            class="w-16 h-16 rounded-full border-4 border-green-600 dark:border-green-400 border-t-transparent animate-spin">
-          </div>
-          <i class="ph-fill ph-chart-bar text-xl text-green-600 dark:text-green-400 absolute"></i>
-        </div>
-        <h3 class="text-lg font-bold text-gray-800 dark:text-gray-100 mb-1">Analizando Datos</h3>
-        <p class="text-sm text-gray-500 dark:text-gray-400 font-medium">Generando métricas y gráficos...</p>
-      </div>
-
-      <div id="dashboardContent" class="hidden space-y-4 print:space-y-0 fade-in">
-        <div class="haccp-print-container mb-6 print:mb-2 w-full hidden print:block">
-          <div class="header-flex-container">
-            <svg class="logo" viewBox="60 20 280 160" xmlns="http://www.w3.org/2000/svg">
-              <path d="m200 25 135 47v56l-135 47-135-47V72z" fill="#C51D23" stroke="#C51D23" stroke-width="8"
-                stroke-linejoin="round" />
-              <path d="m200 25 135 47v56l-135 47-135-47V72z" fill="none" stroke="#B08D57" stroke-width="1"
-                stroke-linejoin="round" />
-              <text x="200" y="86" font-family="Times, serif" font-size="36" font-weight="bold" text-anchor="middle"
-                fill="#404040">LA</text>
-              <text x="200" y="85" font-family="Times, serif" font-size="36" font-weight="bold" text-anchor="middle"
-                fill="#FFF">LA</text>
-              <text x="200" y="121" font-family="Times, serif" font-size="42" font-weight="bold" text-anchor="middle"
-                fill="#404040">GENOVESA</text>
-              <text x="200" y="120" font-family="Times, serif" font-size="42" font-weight="bold" text-anchor="middle"
-                fill="#FFF">GENOVESA</text>
-              <text x="200" y="145" font-family="Arial, sans-serif" font-size="12" text-anchor="middle" fill="#FFF"
-                letter-spacing="3">DESDE 1977</text>
-            </svg>
-            <div class="header-text-wrapper">
-              <div class="header-title">PLAN HACCP<br>REPORTE DE GESTIÓN DE RESIDUOS</div>
-              <div class="template-details">
-                <div>Código: LGA-SGA-RES-01</div>
-                <div>Fecha: 08-2025</div>
-                <div>Versión: 1</div>
-              </div>
-              <div class="template-details">
-                <div>Elaborado por: Aseguramiento de Calidad</div>
-                <div>Revisado por: Sub Gerente</div>
-                <div>Aprobado por: Gerente General</div>
-              </div>
-            </div>
-          </div>
-          <div class="section-info">
-            <div><span style="color: #0056B3;font-size: 1em; font-weight: bold;">Fecha Inicio: </span><span
-                id="printFInicio"></span><br><span style="color: #0056B3;font-size: 1em; font-weight: bold;">Fecha Fin:
-              </span><span id="printFFin"></span></div>
-            <div><span style="color: #0056B3;font-size: 1em; font-weight: bold;">Área: </span><span
-                id="printFArea"></span><br><span style="color: #0056B3;font-size: 1em; font-weight: bold;">Tipo Residuo:
-              </span><span id="printFTipo"></span></div>
-            <div><span style="color: #0056B3;font-size: 1em; font-weight: bold;">Generado por: </span><span
-                id="printGeneradoPor"></span></div>
-          </div>
-        </div>
-
-        <div class="flex justify-between items-center print:hidden">
-          <h2 class="text-xl font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2"><i
-              class="ph ph-chart-line-up text-green-600"></i> Análisis General</h2>
-          <div class="flex items-center gap-2">
-            <button id="btnExportarExcel"
-              class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 shadow-sm">
-              <i class="ph ph-file-xls text-lg"></i> Exportar Excel
-            </button>
-            <button id="btnPrint"
-              class="bg-gray-800 hover:bg-gray-900 dark:bg-gray-700 dark:hover:bg-gray-600 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 shadow-sm">
-              <i class="ph ph-printer text-lg"></i> Imprimir Reporte
-            </button>
-          </div>
-        </div>
-
-        <div
-          class="bg-white dark:bg-gray-800 p-5 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 grid grid-cols-1 md:grid-cols-4 gap-4 items-end print:hidden">
-          <div>
-            <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1 flex items-center gap-1"><i
-                class="ph ph-calendar"></i> Fecha Inicio</label>
-            <input type="date" id="filtroFechaInicio"
-              class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg outline-none bg-white dark:bg-gray-700 dark:text-white">
-          </div>
-          <div>
-            <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1 flex items-center gap-1"><i
-                class="ph ph-calendar"></i> Fecha Fin</label>
-            <input type="date" id="filtroFechaFin"
-              class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg outline-none bg-white dark:bg-gray-700 dark:text-white">
-          </div>
-          <div>
-            <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1 flex items-center gap-1"><i
-                class="ph ph-map-pin"></i> Área</label>
-            <select id="filtroArea"
-              class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg outline-none bg-white dark:bg-gray-700 dark:text-white">
-              <option value="TODAS">Todas las áreas</option>
-              <option value="Almacen PT">Almacen PT</option>
-              <option value="Almacen MP">Almacen MP</option>
-              <option value="Desposte">Desposte</option>
-              <option value="Empaque">Empaque</option>
-              <option value="Madurado">Madurado</option>
-              <option value="Produccion">Produccion</option>
-              <option value="Saneamiento">Saneamiento</option>
-              <option value="Otra">Otra...</option>
-            </select>
-          </div>
-          <div>
-            <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1 flex items-center gap-1"><i
-                class="ph ph-recycle"></i> Tipo</label>
-            <select id="filtroTipo"
-              class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg outline-none bg-white dark:bg-gray-700 dark:text-white">
-              <option value="TODOS">Todos los tipos</option>
-              <option value="Organico">Organico</option>
-              <option value="Plastico">Plastico</option>
-              <option value="Carton/Papel">Carton/Papel</option>
-              <option value="Generales/Basura">Generales/Basura</option>
-            </select>
-          </div>
-        </div>
-
-        <div id="printKpiGrid" class="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div
-            class="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 flex items-center gap-4">
-            <div
-              class="w-14 h-14 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center text-green-600 dark:text-green-400">
-              <i class="ph-fill ph-scales text-3xl"></i></div>
-            <div>
-              <p class="text-sm text-gray-500 dark:text-gray-400 font-medium">Total Residuos (Kg)</p>
-              <h3 id="kpiPeso" class="text-2xl font-bold text-gray-900 dark:text-white">0.0</h3>
-            </div>
-          </div>
-          <div
-            class="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 flex items-center gap-4">
-            <div
-              class="w-14 h-14 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-600 dark:text-blue-400">
-              <i class="ph-fill ph-shopping-bag text-3xl"></i></div>
-            <div>
-              <p class="text-sm text-gray-500 dark:text-gray-400 font-medium">Bolsas Utilizadas</p>
-              <h3 id="kpiBolsas" class="text-2xl font-bold text-gray-900 dark:text-white">0</h3>
-            </div>
-          </div>
-          <div
-            class="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 flex items-center gap-4">
-            <div
-              class="w-14 h-14 rounded-full bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center text-purple-600 dark:text-purple-400">
-              <i class="ph-fill ph-files text-3xl"></i></div>
-            <div>
-              <p class="text-sm text-gray-500 dark:text-gray-400 font-medium">Registros Filtrados</p>
-              <h3 id="kpiRegistros" class="text-2xl font-bold text-gray-900 dark:text-white">0</h3>
-            </div>
-          </div>
-        </div>
-
-        <div id="printChartGrid" class="grid grid-cols-1 lg:grid-cols-2 gap-6 pb-8 print:pb-2">
-          <div class="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700">
-            <h3
-              class="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-4 border-b border-gray-100 dark:border-gray-700 pb-2">
-              Residuos por Área (Kg)</h3>
-            <div class="relative h-[300px] mt-4"><canvas id="chartArea"></canvas></div>
-          </div>
-          <div class="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700">
-            <h3
-              class="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-4 border-b border-gray-100 dark:border-gray-700 pb-2">
-              Distribución por Tipo</h3>
-            <div class="relative h-[300px] flex justify-center mt-4"><canvas id="chartTipo"></canvas></div>
-          </div>
-        </div>
-
-        <div class="haccp-print-container w-full hidden print:block mt-6">
-          <div class="bottom-sections-wrapper">
-            <div class="notes-section">
-              <div class="notes-box">
-                <ul>
-                  <li>El residuo debe estar siempre segregado por tipo.</li>
-                  <li>Ante cualquier incidencia reportar a Jefatura de AGCC</li>
-                </ul>
-              </div>
-            </div>
-            <div class="signature-section">
-              <div class="signature-box">
-                <div class="signature-area"></div>
-                <div class="label" id="printFirmaNombre">Supervisor</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div id="vistaRevision" class="hidden space-y-6 fade-in print:hidden">
-      <div class="bg-white dark:bg-gray-800 py-6 px-0 md:p-6 rounded-none md:rounded-xl shadow-sm border-y md:border border-gray-100 dark:border-gray-700 -mx-4 md:mx-0 transition-colors">
-
-        <div id="revisionLoading" class="hidden flex-col items-center justify-center py-16 px-4 bg-white dark:bg-gray-800 rounded-lg w-full fade-in mt-2 print:hidden">
-          <div class="relative flex items-center justify-center mb-3">
-            <div class="absolute inset-0 rounded-full border-4 border-gray-100 dark:border-gray-700"></div>
-            <div class="w-12 h-12 rounded-full border-4 border-blue-500 dark:border-blue-400 border-t-transparent animate-spin"></div>
-            <i class="ph-fill ph-folder-open text-md text-blue-500 dark:text-blue-400 absolute"></i>
-          </div>
-          <p class="text-gray-600 dark:text-gray-300 font-medium">Sincronizando registros...</p>
         </div>
         
-        <div id="revisionContent" class="overflow-x-auto w-full border-y md:border md:rounded-lg border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 scrollbar-hide">
-          <table class="w-full text-sm text-left text-gray-600 dark:text-gray-300 min-w-max">
-            <thead class="text-xs text-gray-700 dark:text-gray-200 uppercase bg-gray-50 dark:bg-gray-700 border-b border-gray-200 dark:border-gray-600">
-              <tr>
-                <th scope="col" class="px-4 py-3 whitespace-nowrap">Fecha y Hora</th>
-                <th scope="col" class="px-4 py-3 whitespace-nowrap">Área de Origen</th>
-                <th scope="col" class="px-4 py-3 whitespace-nowrap">Tipo</th>
-                <th scope="col" class="px-4 py-3 text-center whitespace-nowrap">Peso (Kg)</th>
-                <th scope="col" class="px-4 py-3 text-center whitespace-nowrap">Bolsas</th>
-                <th scope="col" class="px-4 py-3 text-center whitespace-nowrap">Acción</th>
-              </tr>
-            </thead>
-            <tbody id="tablaMisRegistros" class="divide-y divide-gray-100 dark:divide-gray-700 bg-white dark:bg-gray-800">
-              </tbody>
-          </table>
+        <div class="flex-grow w-full max-w-7xl mx-auto p-6 md:p-10">
+           <div id="grid-areas" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              </div>
         </div>
-
-        <div id="emptyRevisionState" class="hidden px-4 py-12 text-center flex flex-col items-center justify-center">
-          <div class="w-16 h-16 bg-gray-50 dark:bg-gray-700 rounded-full flex items-center justify-center mb-3">
-            <i class="ph ph-folder-open text-3xl text-gray-400"></i>
-          </div>
-          <p class="text-gray-600 dark:text-gray-300 font-medium">No hay registros tuyos en este rango de fechas</p>
-        </div>
-
       </div>
     </div>
 
-  </div>
-
-  <div id="modalEdicion"
-    class="hidden fixed inset-0 z-[100] flex items-center justify-center p-4 bg-gray-900 bg-opacity-50 backdrop-blur-sm print:hidden">
-    <div
-      class="bg-white dark:bg-gray-800 rounded-2xl shadow-xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh]">
-      <div
-        class="p-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-gray-50 dark:bg-gray-900">
-        <h3 class="font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
-          <i class="ph ph-pencil-simple text-green-600"></i> Editar Registro
-        </h3>
-        <button onclick="cerrarModalEdicion()" class="text-gray-400 hover:text-red-500 transition-colors">
-          <i class="ph ph-x text-xl"></i>
-        </button>
-      </div>
-
-      <div class="p-6 overflow-y-auto">
-        <form id="formEdicionRegistro" class="space-y-4">
-          <input type="hidden" id="editId">
-          <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Área de Origen</label>
-            <select id="editArea" required
-              class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white outline-none">
-              <option value="Almacen PT">Almacen PT</option>
-              <option value="Almacen MP">Almacen MP</option>
-              <option value="Desposte">Desposte</option>
-              <option value="Empaque">Empaque</option>
-            </select>
+    <div id="viewModal" role="dialog" class="fixed inset-0 bg-gray-50 dark:bg-gray-900 hidden z-50 overflow-y-auto slide-in">
+      <div class="bg-gray-50 dark:bg-gray-900 min-h-screen w-full flex flex-col relative">
+        <div class="px-6 md:px-10 py-4 border-b border-gray-200 dark:border-gray-700 flex flex-col sm:flex-row items-center justify-between sticky top-0 bg-white/95 dark:bg-gray-800/95 backdrop-blur-sm z-30 shadow-sm gap-4">
+          <div class="flex items-center space-x-4 w-full sm:w-auto">
+            <button type="button" onclick="window.closeViewModal()" class="text-gray-500 dark:text-gray-400 hover:text-blue-700 dark:hover:text-blue-400 bg-gray-100 dark:bg-gray-700 hover:bg-blue-50 dark:hover:bg-gray-600 transition p-2.5 rounded-full">
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+            </button>
+            <h3 class="text-2xl font-black text-blue-900 dark:text-white tracking-tight" id="viewTitle">Visor de Documento</h3>
           </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Tipo de Residuo</label>
-            <select id="editTipo" required
-              class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white outline-none">
-              <option value="Organico">Organico</option>
-              <option value="Plastico">Plastico</option>
-              <option value="Carton/Papel">Carton/Papel</option>
-              <option value="Generales/Basura">Generales/Basura</option>
-            </select>
-          </div>
-          <div class="grid grid-cols-2 gap-4">
-            <div>
-              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Peso (Kg)</label>
-              <input type="number" id="editPeso" step="0.01" min="0" required
-                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white outline-none">
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Nº Bolsas</label>
-              <input type="number" id="editBolsas" step="1" min="0" required
-                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white outline-none">
-            </div>
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Observaciones</label>
-            <textarea id="editObservaciones" rows="2"
-              class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 dark:text-white outline-none resize-none"></textarea>
-          </div>
-          <div class="pt-4 flex gap-3">
-            <button type="button" onclick="cerrarModalEdicion()"
-              class="flex-1 px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-lg hover:bg-gray-200 font-medium">Cancelar</button>
-            <button type="submit" id="btnGuardarEdicion"
-              class="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium flex justify-center items-center gap-2">
-              <i class="ph ph-check-circle"></i> Guardar
+          <div class="flex items-center space-x-3 w-full sm:w-auto justify-end">
+            <button type="button" id="btnExportWord" class="bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500 text-white px-5 py-2.5 rounded-lg font-bold text-sm flex items-center space-x-2 transition shadow shrink-0">
+              <span class="hidden sm:inline">Exportar .DOC</span><span class="sm:hidden">.DOC</span>
             </button>
           </div>
-        </form>
+        </div>
+        <div class="flex-grow w-full max-w-6xl mx-auto p-6 md:p-10 rich-text-content" id="viewContent"></div>
       </div>
     </div>
   </div>
 
+<div id="areaFormModal" role="dialog" class="fixed inset-0 bg-gray-900/40 dark:bg-gray-900/80 hidden z-[60] overflow-y-auto backdrop-blur-sm items-center justify-center fade-in">
+        <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-xl mx-4 overflow-hidden border border-gray-200 dark:border-gray-700 my-8">
+            <div class="px-6 py-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-gray-50 dark:bg-gray-900/50">
+                <h3 id="areaFormTitle" class="text-lg font-black text-gray-800 dark:text-white uppercase tracking-wide">Configurar Área</h3>
+                <button type="button" onclick="window.closeAreaForm()" class="text-gray-400 hover:text-red-500 transition bg-white dark:bg-gray-800 p-1.5 rounded-full shadow-sm border border-gray-100 dark:border-gray-700"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg></button>
+            </div>
+            
+            <form id="area-config-form" onsubmit="window.handleAreaSubmit(event)" class="p-6 space-y-5">
+                
+               <div>
+                    <label class="block text-xs font-bold text-gray-600 dark:text-gray-400 mb-1.5 uppercase">Macro-Área a la que pertenece</label>
+                    <select id="cfgAreaMacro" required onchange="window.toggleNewMacroFields(); window.autoCalcPrefix();" class="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none transition cursor-pointer">
+                        </select>
+                </div>
+                
+                <div id="newMacroContainer" class="hidden grid grid-cols-2 gap-4 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-xl border border-blue-200 dark:border-blue-800/50 transition-all">
+                    <div class="col-span-2 text-xs font-black text-blue-800 dark:text-blue-400 uppercase tracking-wide flex items-center gap-1"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg> Definir Nueva Macro-Área</div>
+                    <div>
+                        <label class="block text-[10px] font-bold text-gray-600 dark:text-gray-400 mb-1 uppercase">Nombre de la Macro</label>
+                        <input type="text" id="cfgNewMacroName" placeholder="Ej: Gerencia General" class="w-full px-3 py-2 border border-white dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none shadow-sm focus:ring-2 focus:ring-blue-400">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-bold text-gray-600 dark:text-gray-400 mb-1 uppercase">Abreviatura Macro</label>
+                        <input type="text" id="cfgNewMacroAbbr" placeholder="Ej: GER" maxlength="6" oninput="window.autoCalcPrefix()" class="w-full px-3 py-2 border border-white dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none font-mono uppercase shadow-sm focus:ring-2 focus:ring-blue-400">
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 border-t border-gray-100 dark:border-gray-700 pt-4">
+                    <div class="md:col-span-2">
+                        <label class="block text-xs font-bold text-gray-600 dark:text-gray-400 mb-1.5 uppercase">Nombre Oficial del Área</label>
+                        <input type="text" id="cfgAreaName" required placeholder="Ej: Empaque Skin" class="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-gray-600 dark:text-gray-400 mb-1.5 uppercase">Abrev. Área</label>
+                        <input type="text" id="cfgAreaAbbr" required placeholder="Ej: SKN" maxlength="6" oninput="window.autoCalcPrefix()" class="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none font-mono uppercase text-center">
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                        <label class="block text-[10px] font-bold text-blue-600 dark:text-blue-400 mb-1.5 uppercase tracking-wide">Prefijo Código POE</label>
+                        <input type="text" id="cfgAreaPrefix" required placeholder="Ej: PROD-SKN" maxlength="15" class="w-full px-3 py-2.5 border border-blue-300 dark:border-blue-700 rounded-lg text-sm bg-blue-50 dark:bg-blue-900/20 text-blue-900 dark:text-blue-200 focus:ring-2 focus:ring-blue-500 outline-none font-mono uppercase text-center font-bold">
+                    </div>
+                    <div class="md:col-span-2">
+                        <label class="block text-[10px] font-bold text-gray-600 dark:text-gray-400 mb-1.5 uppercase tracking-wide">Estado Operativo</label>
+                        <select id="cfgAreaStatus" class="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none font-bold">
+                            <option value="ACT" class="text-green-600 dark:text-green-400">Activo (Visible en todo el sistema)</option>
+                            <option value="OBS" class="text-red-600 dark:text-red-400">Obsoleto (Ocultar del mapa)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-gray-600 dark:text-gray-400 mb-1.5 uppercase">Descripción Técnica</label>
+                    <textarea id="cfgAreaDesc" rows="2" placeholder="Resumen de procesos ejecutados..." class="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none resize-none"></textarea>
+                </div>
+
+                <div class="pt-4 border-t border-gray-100 dark:border-gray-700 flex justify-end gap-3">
+                    <button type="button" onclick="window.closeAreaForm()" class="px-5 py-2.5 rounded-lg text-sm font-bold text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition border border-transparent hover:border-gray-200 dark:hover:border-gray-600">Cancelar</button>
+                    <button type="submit" id="btnSaveArea" class="px-6 py-2.5 rounded-lg text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-md transition flex items-center gap-2">
+                        <i class="ph ph-floppy-disk text-lg"></i> Guardar Área
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+  
   <script src="script.js"></script>
 </body>
-
 </html>
