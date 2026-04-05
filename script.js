@@ -29,10 +29,28 @@ window.addEventListener('message', (event) => {
 });
 
 window.getPermisos = function() {
-    if (!state.user) return { canEdit: false, isOperario: true, area: '' };
+    if (!state.user) return { rol: 'GUEST', area: '', canViewAll: false, canEditAll: false, canEditOwn: false, canManageAreas: false };
+    
     const rol = String(state.user.rol).toUpperCase();
-    const canEdit = ['GERENTE', 'JEFE', 'SUPERVISOR', 'ADMINISTRADOR', 'ADMIN', 'SISTEMAS'].includes(rol);
-    return { canEdit, isOperario: !canEdit, area: String(state.user.area).toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "") };
+    const areaUser = String(state.user.area).toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+    const isOperario = rol === 'OPERARIO';
+    const isSupervisor = rol === 'SUPERVISOR';
+    const isGerente = rol === 'GERENTE';
+    const isJefe = rol === 'JEFE';
+    const isAdmin = ['ADMINISTRADOR', 'ADMIN', 'SISTEMAS'].includes(rol);
+
+    return { 
+        rol: rol, 
+        area: areaUser,
+        // Visibilidad en Tablas:
+        canViewAll: isSupervisor || isJefe || isGerente || isAdmin,
+        // Creación/Edición de POEs:
+        canEditAll: isJefe || isAdmin,
+        canEditOwn: isSupervisor,
+        // Configuración de la BD de Áreas:
+        canManageAreas: isJefe || isAdmin
+    };
 };
 
 window.initRichEditors = function() {
@@ -104,39 +122,7 @@ const POEDB = {
   }
 };
 
-window.refreshUI = async function () {
-  state.config = await POEDB.getAll("sys_config");
-  state.areas = await POEDB.getAll("areas"); 
-  const allPoes = await POEDB.getAll("poes");
-  const permisos = window.getPermisos();
 
-  state.poes = allPoes.filter((p) => {
-    const s = String(p.status || "").trim().toUpperCase();
-    const isActive = (s === "ACT" || s === "REV" || s === "ACTIVO" || s === "EN REVISION" || s === "EN REVISIÓN");
-    if (!isActive) return false;
-
-    if (permisos.isOperario) {
-        const areaDef = state.areas.find(a => a.areaAbbr === p.subCategory);
-        const catStr = areaDef ? String(areaDef.macroName + " " + areaDef.areaName).toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "") : "";
-        if (!catStr.includes(permisos.area)) return false; 
-    }
-    return true;
-  });
-
-  const btnNuevo = document.getElementById('btn-nuevo-poe');
-  const btnMapa = document.getElementById('btn-mapa-areas');
-  if (btnNuevo) btnNuevo.style.display = permisos.canEdit ? 'flex' : 'none';
-  if (btnMapa) btnMapa.style.display = permisos.canEdit ? 'flex' : 'none';
-
-  window.buildDynamicDictionaries();
-  window.renderPOEs();
-
-  const safeSet = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
-  safeSet("totalPOEs", state.poes.length);
-  safeSet("produccionCount", state.poes.filter((p) => p.category === "PROD").length);
-  safeSet("logisticaCount", state.poes.filter((p) => p.category === "LOG").length);
-  safeSet("calidadCount", state.poes.filter((p) => p.category === "CAL").length);
-};
 
 // 🆕 DICCIONARIOS BASADOS EN 8 COLUMNAS
 window.buildDynamicDictionaries = function () {
@@ -206,17 +192,59 @@ window.generatePoeCode = function () {
   }
 };
 
+window.refreshUI = async function () {
+  state.config = await POEDB.getAll("sys_config");
+  state.areas = await POEDB.getAll("areas"); 
+  const allPoes = await POEDB.getAll("poes");
+  const permisos = window.getPermisos();
+
+  // 1. FILTRO DE VISIBILIDAD DE POES
+  state.poes = allPoes.filter((p) => {
+    const s = String(p.status || "").trim().toUpperCase();
+    const isActive = (s === "ACT" || s === "REV" || s === "ACTIVO" || s === "EN REVISION" || s === "EN REVISIÓN");
+    if (!isActive) return false;
+
+    // Si no puede ver todos (Ej: Operario), filtramos estrictamente por su área
+    if (!permisos.canViewAll) {
+        const areaDef = state.areas.find(a => a.areaAbbr === p.subCategory);
+        const catStr = areaDef ? String(areaDef.macroName + " " + areaDef.areaName).toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "") : "";
+        if (!catStr.includes(permisos.area)) return false; 
+    }
+    return true;
+  });
+
+  // 2. VISIBILIDAD DE BOTONES PRINCIPALES
+  const btnNuevo = document.getElementById('btn-nuevo-poe');
+  const btnMapa = document.getElementById('btn-mapa-areas');
+  
+  // Nuevo POE: Solo si puede editar todo o editar lo suyo
+  if (btnNuevo) btnNuevo.style.display = (permisos.canEditAll || permisos.canEditOwn) ? 'flex' : 'none';
+  
+  // Mapa Áreas: Ahora TODOS pueden ver el mapa (según el requerimiento)
+  if (btnMapa) btnMapa.style.display = 'flex'; 
+
+  window.buildDynamicDictionaries();
+  window.renderPOEs();
+
+  const safeSet = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  safeSet("totalPOEs", state.poes.length);
+  safeSet("produccionCount", state.poes.filter((p) => p.category === "PROD").length);
+  safeSet("logisticaCount", state.poes.filter((p) => p.category === "LOG").length);
+  safeSet("calidadCount", state.poes.filter((p) => p.category === "CAL").length);
+};
+
 window.renderPOEs = function () {
   const tbody = document.getElementById("table-body");
   if (!tbody) return;
 
   const query = document.getElementById("searchInput")?.value.toLowerCase() || "";
+  const permisos = window.getPermisos(); 
+
   const filtered = state.poes.filter((p) => {
       const areaObj = state.areas.find(a => a.areaAbbr === p.subCategory);
       const srch = p.code + p.title + (areaObj ? areaObj.areaName : p.subCategory);
       return srch.toLowerCase().includes(query);
   });
-  const permisos = window.getPermisos(); 
 
   if (filtered.length === 0) {
     tbody.innerHTML = `<tr><td colspan="5" class="text-center p-6 text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700">Sin procedimientos disponibles.</td></tr>`;
@@ -225,14 +253,17 @@ window.renderPOEs = function () {
 
   tbody.innerHTML = filtered.slice().reverse().map((poe) => {
     const isPending = poe._syncStatus === "pending";
-    const badge = isPending
-      ? `<span class="bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-[10px] font-bold uppercase dark:bg-yellow-900/40 dark:text-yellow-300">En Cola</span>`
-      : `<span class="bg-green-100 text-green-800 px-2 py-1 rounded text-[10px] font-bold uppercase dark:bg-green-900/40 dark:text-green-300">En Nube</span>`;
+    const badge = isPending ? `<span class="bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-[10px] font-bold uppercase dark:bg-yellow-900/40 dark:text-yellow-300">En Cola</span>` : `<span class="bg-green-100 text-green-800 px-2 py-1 rounded text-[10px] font-bold uppercase dark:bg-green-900/40 dark:text-green-300">En Nube</span>`;
 
     const areaObj = state.areas.find((a) => a.areaAbbr === poe.subCategory);
     const areaName = areaObj ? areaObj.areaName : poe.subCategory;
 
-    const actionButtons = permisos.canEdit ? `
+    // 🛡️ LÓGICA DE EDICIÓN (Supervisor vs Jefe)
+    const catStr = areaObj ? String(areaObj.macroName + " " + areaObj.areaName).toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "") : "";
+    const isMyArea = catStr.includes(permisos.area);
+    const canEditThisPOE = permisos.canEditAll || (permisos.canEditOwn && isMyArea);
+
+    const actionButtons = canEditThisPOE ? `
         <button type="button" onclick="window.editPOE('${poe.id}')" class="text-yellow-600 bg-yellow-50 dark:bg-yellow-900/20 dark:text-yellow-400 px-3 py-1.5 rounded font-semibold transition hover:bg-yellow-100 dark:hover:bg-yellow-900/40" title="Editar Documento">✏️</button>
         <button type="button" onclick="window.deletePOE('${poe.id}')" class="text-red-600 bg-red-50 dark:bg-red-900/20 dark:text-red-400 px-3 py-1.5 rounded font-semibold transition hover:bg-red-100 dark:hover:bg-red-900/40" title="Marcar Obsoleto">✖</button>
     ` : '';
@@ -251,9 +282,6 @@ window.renderPOEs = function () {
   }).join("");
 };
 
-// ==========================================
-// 6. MAPA DE ÁREAS MOCKUP EXACTO
-// ==========================================
 window.setAreaFilter = function(macro) {
     state.activeAreaFilter = macro;
     window.renderMapaAreas();
@@ -301,17 +329,31 @@ window.renderMapaAreas = function() {
         </div>
         `;
         groups[macro].forEach(area => {
+            
+            // 🛡️ Botón configurar oculto si no tiene permiso
+            const btnConfig = window.getPermisos().canManageAreas ? 
+                `<button onclick="window.openAreaForm('${area.id}')" class="flex-1 py-2.5 rounded-xl bg-gray-50 dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-[10px] uppercase font-bold hover:bg-blue-50 dark:hover:bg-blue-900/30 hover:text-blue-600 dark:hover:text-blue-400 transition-colors border border-gray-200 dark:border-gray-600">CONFIGURAR</button>` : '';
+
             gridHTML += `
-            <div class="bg-white dark:bg-gray-800 rounded-xl p-5 border border-gray-200 dark:border-gray-700 shadow-sm hover:shadow-md transition-shadow flex gap-4 cursor-pointer" onclick="window.closeAreasModal(); document.getElementById('searchInput').value = '${area.areaName}'; window.refreshUI();">
-                <div class="flex-shrink-0 mt-1 text-red-500 dark:text-red-400">
-                    <div class="w-10 h-10 rounded-full bg-red-50 dark:bg-red-900/20 flex items-center justify-center border border-red-100 dark:border-red-900/50">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+            <div class="bg-white dark:bg-gray-800 rounded-xl p-5 border border-gray-200 dark:border-gray-700 shadow-sm hover:shadow-md transition-shadow flex flex-col h-full fade-in">
+                
+                <div class="flex gap-4 mb-3">
+                    <div class="flex-shrink-0 mt-1 text-red-500 dark:text-red-400">
+                        <div class="w-10 h-10 rounded-full bg-red-50 dark:bg-red-900/20 flex items-center justify-center border border-red-100 dark:border-red-900/50">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                        </div>
+                    </div>
+                    <div>
+                        <h4 class="font-bold text-gray-900 dark:text-white text-base leading-tight">${area.areaName}</h4>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 font-mono mt-1 tracking-wide">${area.poePrefix}-XXX</p>
                     </div>
                 </div>
-                <div>
-                    <h4 class="font-bold text-gray-900 dark:text-white text-base leading-tight">${area.areaName}</h4>
-                    <p class="text-xs text-gray-500 dark:text-gray-400 font-mono mt-1 mb-2 tracking-wide">${area.poePrefix}-XXX</p>
-                    <p class="text-xs text-gray-600 dark:text-gray-400 leading-relaxed line-clamp-2">${area.desc || 'Sin descripción detallada.'}</p>
+
+                <p class="text-xs text-gray-600 dark:text-gray-400 leading-relaxed line-clamp-3 flex-grow">${area.desc || 'Sin descripción detallada.'}</p>
+                
+                <div class="flex gap-2 mt-4">
+                    ${btnConfig}
+                    <button onclick="window.closeAreasModal(); document.getElementById('searchInput').value = '${area.areaName}'; window.refreshUI();" class="flex-1 py-2.5 rounded-xl bg-blue-600 text-white text-[10px] uppercase font-bold hover:bg-blue-700 shadow-md transition-all">VER POEs</button>
                 </div>
             </div>
             `;
@@ -331,8 +373,15 @@ window.openAreasModal = function () {
         m.classList.remove("hidden");
         m.classList.add("flex");
         window.setAreaFilter('TODAS'); 
+        
+        // 🛡️ Ocultar el botón "Nueva Área" en la cabecera si no es Jefe/Admin
+        const btnNewArea = document.querySelector('button[onclick="window.openAreaForm()"]');
+        if (btnNewArea) {
+            btnNewArea.style.display = window.getPermisos().canManageAreas ? 'flex' : 'none';
+        }
     }
 };
+
 window.closeAreasModal = function () {
     const m = document.getElementById("areasModal");
     if (m) { m.classList.add("hidden"); m.classList.remove("flex"); }
@@ -501,9 +550,6 @@ window.handleAreaSubmit = async function(e) {
     }
 };
 
-// ==========================================
-// 7. GESTOR TÉCNICO DE PASOS (REORDENAMIENTO Y EDICIÓN IN-PLACE)
-// ==========================================
 
 window.updateFileText = function (input) {
   const d = document.getElementById("fileNameDisplay");
@@ -673,15 +719,25 @@ window.renderAdvancedSteps = function () {
     }).join("");
 };
 
-// ==========================================
-// 8. CRUD Y EDICIÓN
-// ==========================================
 window.handleFormSubmit = async function (e) {
   e.preventDefault();
+  const permisos = window.getPermisos();
   
   if (!state.isSessionVerified || !state.user) return alert("Acción bloqueada: Esperando sincronización con el HUB.");
-  if (!window.getPermisos().canEdit) return alert("Acción denegada por seguridad (Rol: Operario).");
+  if (!permisos.canEditAll && !permisos.canEditOwn) return alert("Acción denegada. Nivel de acceso insuficiente.");
   if (state.form.advancedSteps.length === 0) return alert("Debe incluir al menos 1 paso en el procedimiento.");
+
+  // 🛡️ Validación estricta para Supervisores (canEditOwn)
+  if (permisos.canEditOwn && !permisos.canEditAll) {
+      const cat = getFieldValue("category");
+      const sub = getFieldValue("poeSubCategory");
+      const areaDef = state.areas.find(a => a.macroAbbr === cat && a.areaAbbr === sub);
+      const catStr = areaDef ? String(areaDef.macroName + " " + areaDef.areaName).toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "") : "";
+      
+      if (!catStr.includes(permisos.area)) {
+          return alert(`BLOQUEO DE SEGURIDAD: Usted es Supervisor del área [${permisos.area}]. No tiene permisos para crear o modificar procedimientos del área seleccionada.`);
+      }
+  }
 
   const isEditing = !!state.form.editingId;
   const poeId = isEditing ? state.form.editingId : `UUID-${Date.now()}`;
