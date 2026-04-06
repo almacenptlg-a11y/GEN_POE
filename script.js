@@ -945,11 +945,86 @@ window.clonePOE = function (id) {
 };
 
 // ==========================================
+// 🎨 MOTOR DE RUTEADO SVG PARA FLUJOGRAMAS
+// ==========================================
+window.drawFlowchartArrows = function(steps) {
+    const canvas = document.getElementById('flowchart-canvas');
+    const svgLayer = document.getElementById('svg-layer');
+    
+    if (!canvas || !svgLayer) {
+        return;
+    }
+
+    const canvasRect = canvas.getBoundingClientRect();
+    
+    // Definimos las cabezas de flecha (Markers)
+    let svgContent = `
+        <defs>
+            <marker id="arrowhead-red" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+                <polygon points="0 0, 8 3, 0 6" fill="#dc2626" />
+            </marker>
+            <marker id="arrowhead-amber" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+                <polygon points="0 0, 8 3, 0 6" fill="#d97706" />
+            </marker>
+        </defs>
+    `;
+
+    steps.forEach(step => {
+        if ((step.type === 'PC' || step.type === 'PCC') && step.devRoute) {
+            
+            const devBox = document.getElementById(`dev-${step.id}`);
+            
+            let targetNodeId = `node-${step.devRoute}`;
+            if (step.devRoute === "FIN") {
+                targetNodeId = "node-fin";
+            }
+            
+            const targetNode = document.getElementById(targetNodeId);
+
+            if (devBox && targetNode) {
+                // Seleccionamos la caja visual interna de la alerta de desviación
+                const devBoxContent = devBox.lastElementChild;
+                
+                if (devBoxContent) {
+                    const devRect = devBoxContent.getBoundingClientRect();
+                    const targetRect = targetNode.getBoundingClientRect();
+
+                    // Coordenada Inicial: Borde derecho de la desviación
+                    const startX = devRect.right - canvasRect.left;
+                    const startY = devRect.top + (devRect.height / 2) - canvasRect.top;
+
+                    // Coordenada Final: Borde derecho del nodo de destino
+                    const endX = targetRect.right - canvasRect.left;
+                    const endY = targetRect.top + (targetRect.height / 2) - canvasRect.top;
+
+                    const color = step.type === 'PCC' ? '#dc2626' : '#d97706';
+                    const marker = step.type === 'PCC' ? 'url(#arrowhead-red)' : 'url(#arrowhead-amber)';
+
+                    // Calculamos el "codo" de la flecha (40px a la derecha del punto más lejano)
+                    const elbowX = Math.max(startX, endX) + 40; 
+                    
+                    // Trazamos la línea: -> Derecha, -> Arriba/Abajo, -> Izquierda
+                    const path = `M ${startX},${startY} L ${elbowX},${startY} L ${elbowX},${endY} L ${endX + 5},${endY}`;
+
+                    svgContent += `<path d="${path}" fill="none" stroke="${color}" stroke-width="2.5" stroke-dasharray="5,5" marker-end="${marker}" class="animate-[fadeIn_1s_ease-in-out]" />`;
+                }
+            }
+        }
+    });
+
+    svgLayer.innerHTML = svgContent;
+};
+
+
+// ==========================================
 // 👁️ VISOR MODULAR CON AUTO-FLUJOGRAMA
 // ==========================================
 window.viewPOE = function (id, scrollToFlowchart = false) {
     const poe = state.poes.find((p) => p.id === id); 
-    if (!poe) return;
+    
+    if (!poe) {
+        return;
+    }
     
     const btnExportWord = document.getElementById("btnExportWord"); 
     if (btnExportWord) {
@@ -957,75 +1032,188 @@ window.viewPOE = function (id, scrollToFlowchart = false) {
     }
     
     let stepsHTML = "";
-    let flowchartHTML = `<div class="flex flex-col items-center py-6 font-sans w-full overflow-x-auto"><div class="bg-blue-900 text-white px-8 py-3 rounded-[50px] font-black text-xs shadow-md border-4 border-blue-200 z-10 w-48 text-center uppercase tracking-widest shrink-0">INICIO</div>`;
+    
+    // Contenedor principal del Canvas del Flujograma
+    let flowchartHTML = `
+        <div id="flowchart-canvas" class="relative flex flex-col items-center py-6 font-sans w-full min-w-max">
+            <div class="bg-blue-900 text-white px-8 py-3 rounded-[50px] font-black text-xs shadow-md border-4 border-blue-200 z-10 w-48 text-center uppercase tracking-widest shrink-0">
+                INICIO
+            </div>
+    `;
     
     try {
         const arr = JSON.parse(poe.procedure);
         
-        // 1. CONSTRUIR AUTO-FLUJOGRAMA (VISTA WEB)
-        arr.forEach((s, i) => {
-            flowchartHTML += `<div class="flex flex-col items-center my-1"><div class="w-1 h-6 bg-gray-400"></div><div class="w-3 h-3 border-b-2 border-r-2 border-gray-400 transform rotate-45 -mt-1.5"></div></div>`;
-            const plainText = s.desc.replace(/<[^>]*>?/gm, '').substring(0, 65) + (s.desc.length > 65 ? "..." : "");
+        // ----------------------------------------------------
+        // 1. CONSTRUIR AUTO-FLUJOGRAMA WEB
+        // ----------------------------------------------------
+        arr.forEach((step, i) => {
+            // Parser del DOM para extraer texto limpio
+            const tempDiv = document.createElement('div'); 
+            tempDiv.innerHTML = step.desc;
             
-            if (s.type === 'PCC' || s.type === 'PC') {
-                const color = s.type === 'PCC' ? 'red' : 'amber'; 
-                const label = s.type === 'PCC' ? 'PCC' : 'PC';
+            let stepTitle = `Paso ${i + 1}`;
+            const h3 = tempDiv.querySelector('h3'); 
+            const b = tempDiv.querySelector('b');
+            
+            if (h3) { 
+                stepTitle = h3.innerText; 
+                h3.remove(); 
+            } else if (b) { 
+                stepTitle = b.innerText; 
+                b.remove(); 
+            }
+            
+            const listItems = Array.from(tempDiv.querySelectorAll('li')).map(li => `• ${li.innerText}`);
+            
+            tempDiv.querySelectorAll('ul, ol').forEach(list => list.remove());
+            
+            const remainingText = tempDiv.innerText.trim().substring(0, 95) + (tempDiv.innerText.length > 95 ? "..." : "");
+            
+            let bodyHtml = "";
+            if (listItems.length > 0) {
+                bodyHtml = `
+                    <ul class="text-[10px] text-left list-none mt-1.5 space-y-0.5 text-gray-700 dark:text-gray-300 w-full pl-2">
+                        ${listItems.slice(0,3).map(li => `<li class="truncate" title="${li}">${li}</li>`).join('')}
+                        ${listItems.length > 3 ? `<li class="text-gray-400 italic text-center">...</li>` : ''}
+                    </ul>
+                `;
+            } else if (remainingText) {
+                bodyHtml = `<p class="text-[10px] font-medium text-gray-700 dark:text-gray-300 leading-tight line-clamp-3 mt-1.5">${remainingText}</p>`;
+            }
+
+            // Flecha vertical de conexión entre pasos
+            flowchartHTML += `
+                <div class="flex flex-col items-center my-1">
+                    <div class="w-1 h-8 bg-gray-400"></div>
+                    <div class="w-3 h-3 border-b-2 border-r-2 border-gray-400 transform rotate-45 -mt-1.5"></div>
+                </div>
+            `;
+            
+            if (step.type === 'PCC' || step.type === 'PC') {
+                const color = step.type === 'PCC' ? 'red' : 'amber'; 
+                const label = step.type === 'PCC' ? 'PCC' : 'PC';
+                const devActionText = step.devAction || "Acción Correctiva";
+                
+                // Traductor de ID de Ruta a Nombre de Paso
+                let routeName = step.devRoute;
+                if (step.devRoute === "FIN") {
+                    routeName = "Fin / Desecho";
+                } else if (step.devRoute) {
+                    const targetIdx = arr.findIndex(x => String(x.id) === String(step.devRoute));
+                    if (targetIdx > -1) {
+                        routeName = `Paso ${targetIdx + 1}`;
+                    }
+                }
+                
+                const devRouteText = routeName || "Siguiente paso";
+                const limitHtml = step.devLimit ? `<span class="font-bold text-[10px] text-${color}-700 dark:text-${color}-400 bg-white dark:bg-gray-800 rounded px-1 mb-1 border border-${color}-200">${step.devLimit}</span>` : '';
+
                 flowchartHTML += `
-                <div class="relative flex items-center z-10 shrink-0">
-                    <div class="relative w-40 h-40 flex items-center justify-center">
-                        <div class="absolute inset-0 bg-${color}-50 border-4 border-${color}-500 transform rotate-45 rounded-lg shadow-sm"></div>
-                        <div class="relative z-10 text-center px-4 w-full flex flex-col items-center">
-                            <span class="font-black text-${color}-700 text-[11px] mb-1">${label}</span>
-                            <p class="text-[10px] font-bold text-gray-900 leading-tight line-clamp-3">${plainText}</p>
+                <div class="relative flex items-center z-10 shrink-0 w-[450px] justify-center">
+                    <div id="node-${step.id}" class="relative w-48 h-48 flex items-center justify-center shrink-0">
+                        <div class="absolute inset-0 bg-${color}-50 border-4 border-${color}-500 transform rotate-45 rounded-2xl shadow-md dark:bg-${color}-900/20 dark:border-${color}-600"></div>
+                        <div class="relative z-10 text-center px-3 w-full flex flex-col items-center max-w-[140px]">
+                            <span class="font-black text-${color}-700 dark:text-${color}-400 text-[13px] mb-1 drop-shadow-sm">${label}</span>
+                            <span class="font-bold text-[11px] text-gray-900 dark:text-white leading-tight uppercase truncate w-full border-b border-${color}-200 dark:border-${color}-700 pb-1 mb-1" title="${stepTitle}">${stepTitle}</span>
+                            ${limitHtml}
+                            ${bodyHtml}
                         </div>
                     </div>
-                    <div class="absolute left-full flex items-center w-32 hidden sm:flex">
+                    
+                    <div id="dev-${step.id}" class="absolute left-[calc(50%+6rem)] flex items-center w-40 hidden sm:flex shrink-0">
                         <div class="w-10 h-1 bg-gray-400"></div>
-                        <div class="w-2.5 h-2.5 border-t-2 border-r-2 border-gray-400 transform rotate-45 -ml-1.5"></div>
-                        <div class="bg-gray-100 border border-gray-300 p-2 rounded-lg text-[9px] font-bold text-gray-600 ml-2 w-24 shadow-sm text-center leading-tight">Acción Correctiva</div>
+                        <div class="w-3 h-3 border-t-2 border-r-2 border-gray-400 transform rotate-45 -ml-1.5 bg-white dark:bg-gray-800"></div>
+                        
+                        <div class="bg-white dark:bg-gray-800 border-2 border-gray-300 dark:border-gray-600 p-2.5 rounded-lg flex flex-col gap-1 text-left ml-2 w-36 shadow-sm border-l-4 ${step.type === 'PCC' ? 'border-l-red-500' : 'border-l-yellow-500'}">
+                            <span class="text-[9px] font-black ${step.type === 'PCC' ? 'text-red-600 dark:text-red-400' : 'text-yellow-600 dark:text-yellow-400'} uppercase">⚠️ NO CONFORME:</span>
+                            <span class="text-[10px] font-bold text-gray-700 dark:text-gray-300 leading-tight line-clamp-2" title="${devActionText}">⚡ ${devActionText}</span>
+                            <span class="text-[10px] font-bold text-gray-700 dark:text-gray-300 leading-tight line-clamp-1" title="${devRouteText}">🔄 ${devRouteText}</span>
+                        </div>
                     </div>
                 </div>`;
-            } else if (s.type === 'SEG') {
+                
+            } else if (step.type === 'SEG') {
                 flowchartHTML += `
-                <div class="relative w-56 h-20 flex items-center justify-center z-10 shrink-0">
-                    <div class="absolute inset-0 bg-green-50 border-2 border-green-500 skew-x-[-15deg] rounded-lg shadow-sm"></div>
-                    <div class="relative z-10 text-center px-6">
-                        <span class="font-black text-green-700 text-[10px] mb-0.5 block uppercase">Seguridad</span>
-                        <p class="text-[11px] font-bold text-gray-900 leading-tight line-clamp-2">${plainText}</p>
+                <div id="node-${step.id}" class="relative w-64 min-h-[5.5rem] flex items-center justify-center z-10 shrink-0">
+                    <div class="absolute inset-0 bg-green-50 border-2 border-green-500 skew-x-[-15deg] rounded-xl shadow-md dark:bg-green-900/20 dark:border-green-600"></div>
+                    <div class="relative z-10 text-center px-6 py-3 w-full flex flex-col items-center">
+                        <span class="font-black text-green-700 dark:text-green-400 text-[11px] mb-0.5 block uppercase tracking-wider">Seguridad</span>
+                        <span class="font-bold text-[11px] text-gray-900 dark:text-white block uppercase truncate w-full border-b border-green-200 dark:border-green-700 pb-1 mb-1" title="${stepTitle}">${stepTitle}</span>
+                        ${bodyHtml}
                     </div>
                 </div>`;
+                
             } else {
                 flowchartHTML += `
-                <div class="bg-white border-2 border-blue-600 rounded-xl p-4 w-56 text-center shadow-sm z-10 shrink-0">
-                    <span class="font-black text-blue-800 text-[10px] mb-1 block uppercase">Paso ${i+1}</span>
-                    <p class="text-[11px] font-bold text-gray-900 leading-tight line-clamp-3">${plainText}</p>
+                <div id="node-${step.id}" class="bg-white dark:bg-gray-800 border-2 border-blue-600 dark:border-blue-500 rounded-xl p-4 w-64 text-center shadow-md z-10 shrink-0 flex flex-col items-center">
+                    <span class="font-black text-blue-800 dark:text-blue-400 text-[11px] mb-1 block uppercase tracking-wider">Paso ${i+1}</span>
+                    <span class="font-bold text-[11px] text-gray-900 dark:text-white block uppercase truncate w-full border-b border-gray-200 dark:border-gray-700 pb-1 mb-1" title="${stepTitle}">${stepTitle}</span>
+                    ${bodyHtml}
                 </div>`;
             }
         });
-        flowchartHTML += `<div class="flex flex-col items-center my-1"><div class="w-1 h-6 bg-gray-400"></div><div class="w-3 h-3 border-b-2 border-r-2 border-gray-400 transform rotate-45 -mt-1.5"></div></div><div class="rounded-full bg-gray-800 text-white px-8 py-3 font-black shadow-md border-4 border-gray-300 z-10 w-48 text-center uppercase tracking-widest text-xs shrink-0">FIN</div></div>`;
+        
+        // Cierre del Flujograma y Capa SVG
+        flowchartHTML += `
+                <div class="flex flex-col items-center my-1">
+                    <div class="w-1 h-8 bg-gray-400"></div>
+                    <div class="w-3 h-3 border-b-2 border-r-2 border-gray-400 transform rotate-45 -mt-1.5"></div>
+                </div>
+                <div id="node-fin" class="rounded-full bg-gray-800 text-white px-8 py-3 font-black shadow-md border-4 border-gray-300 z-10 w-48 text-center uppercase tracking-widest text-xs shrink-0">
+                    FIN
+                </div>
+                
+                <svg id="svg-layer" class="absolute inset-0 w-full h-full pointer-events-none z-0"></svg>
+            </div>
+        `;
 
-        // 2. CONSTRUIR DETALLE DE PASOS (ACORDEÓN)
-        stepsHTML = arr.map((s, i) => {
-            const bColor = s.type === "PCC" ? "bg-red-100 text-red-800 border-red-200 dark:bg-red-900/30 dark:text-red-400 dark:border-red-800" : s.type === "PC" ? "bg-yellow-100 text-yellow-800 border-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-400 dark:border-yellow-800" : "bg-gray-100 text-gray-600 border-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:border-gray-700";
-            const img = s.image ? `<img src="${s.image}" class="mt-4 max-h-64 object-cover rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm">` : "";
-            const truncDesc = s.desc.replace(/<[^>]*>?/gm, '').substring(0, 50) + "...";
+        // ----------------------------------------------------
+        // 2. CONSTRUIR DETALLE DE PASOS (ACORDEÓN WEB)
+        // ----------------------------------------------------
+        stepsHTML = arr.map((step, i) => {
+            const bColor = step.type === "PCC" ? "bg-red-100 text-red-800 border-red-200 dark:bg-red-900/30 dark:text-red-400 dark:border-red-800" : step.type === "PC" ? "bg-yellow-100 text-yellow-800 border-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-400 dark:border-yellow-800" : "bg-gray-100 text-gray-600 border-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:border-gray-700";
+            const img = step.image ? `<img src="${step.image}" class="mt-4 max-h-64 object-cover rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm">` : "";
+            const truncDesc = step.desc.replace(/<[^>]*>?/gm, '').substring(0, 50) + "...";
+            
+            let routeName = step.devRoute;
+            if (step.devRoute === "FIN") {
+                routeName = "Fin / Desecho";
+            } else if (step.devRoute) { 
+                const targetIdx = arr.findIndex(x => String(x.id) === String(step.devRoute)); 
+                if (targetIdx > -1) routeName = `Paso ${targetIdx + 1}`; 
+            }
+
+            let devHtml = '';
+            if ((step.type === 'PC' || step.type === 'PCC') && (step.devAction || step.devRoute)) {
+                devHtml = `
+                    <div class="mt-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-800/50 rounded-xl text-xs text-red-900 dark:text-red-200 flex flex-col gap-1.5">
+                        <span class="font-black uppercase tracking-widest text-[10px] text-red-600 dark:text-red-400">Medidas ante Desviación</span>
+                        ${step.devLimit ? `<span><strong>🎯 Límite:</strong> ${step.devLimit}</span>` : ''}
+                        ${step.devAction ? `<span><strong>⚡ Acción:</strong> ${step.devAction}</span>` : ''}
+                        ${routeName ? `<span><strong>🔄 Ruta:</strong> ${routeName}</span>` : ''}
+                    </div>
+                `;
+            }
             
             return `
             <details class="group bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-sm mb-3" open>
                 <summary class="flex items-center justify-between p-4 font-bold cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50 transition rounded-xl outline-none select-none">
                     <div class="flex items-center gap-4 w-full pr-4">
                         <div class="w-8 h-8 rounded-full bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-400 font-black flex items-center justify-center shrink-0 text-sm border border-red-100 dark:border-red-900/50">${i + 1}</div>
-                        <span class="text-[10px] font-black px-2 py-0.5 rounded border uppercase tracking-widest ${bColor} shrink-0">${s.type}</span>
+                        <span class="text-[10px] font-black px-2 py-0.5 rounded border uppercase tracking-widest ${bColor} shrink-0">${step.type}</span>
                         <span class="text-sm text-gray-800 dark:text-gray-200 truncate hidden sm:block">${truncDesc}</span>
                     </div>
                     <svg class="w-5 h-5 text-gray-400 group-open:rotate-180 transition-transform shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
                 </summary>
                 <div class="p-4 pt-0 md:p-6 md:pt-0 ml-2 md:ml-12 border-t border-transparent group-open:border-gray-100 dark:group-open:border-gray-700 mt-2">
-                    <div class="text-sm font-medium text-gray-800 dark:text-gray-200 leading-relaxed rich-text-content">${s.desc}</div>
+                    <div class="text-sm font-medium text-gray-800 dark:text-gray-200 leading-relaxed rich-text-content">${step.desc}</div>
+                    ${devHtml}
                     ${img}
                 </div>
             </details>`;
           }).join("");
+          
     } catch (e) { 
         stepsHTML = `<div class="bg-white dark:bg-gray-800 p-6 rounded-2xl border border-gray-200 dark:border-gray-700"><p class="text-base font-medium text-gray-800 dark:text-gray-200 leading-relaxed">${poe.procedure}</p></div>`; 
         flowchartHTML = `<p class="text-center text-gray-500 my-8">Flujograma no disponible.</p>`;
@@ -1094,8 +1282,10 @@ window.viewPOE = function (id, scrollToFlowchart = false) {
                     <div class="flex items-center gap-3 text-gray-800 dark:text-gray-200 uppercase tracking-widest text-sm"><span class="text-lg">🗺️</span> 3. Flujograma del Proceso</div>
                     <svg class="w-5 h-5 text-gray-400 group-open:rotate-180 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
                 </summary>
-                <div class="border-t border-gray-100 dark:border-gray-700 mt-2 bg-gray-50/50 dark:bg-gray-900/50 overflow-x-auto rounded-b-2xl scroll-smooth">
-                    ${flowchartHTML}
+                <div class="border-t border-gray-100 dark:border-gray-700 mt-2 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGNpcmNsZSBjeD0iMiIgY3k9IjIiIHI9IjEiIGZpbGw9IiNlNWU3ZWIiLz48L3N2Zz4=')] dark:bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGNpcmNsZSBjeD0iMiIgY3k9IjIiIHI9IjEiIGZpbGw9IiMzNzQxNTEiLz48L3N2Zz4=')] rounded-b-2xl overflow-auto max-h-[600px] custom-scrollbar shadow-inner relative">
+                    <div class="min-w-max px-20 py-8 flex justify-center">
+                        ${flowchartHTML}
+                    </div>
                 </div>
             </details>
 
@@ -1109,23 +1299,29 @@ window.viewPOE = function (id, scrollToFlowchart = false) {
         </div>`;
     }
   
-   // Inyectar título dinámico en el Topbar del Visor
-  const viewTitleEl = document.getElementById("viewTitle");
-  if (viewTitleEl) {
-      viewTitleEl.textContent = `${poe.code} - ${poe.title}`;
-      viewTitleEl.title = `${poe.code} - ${poe.title}`; // Tooltip nativo por si se trunca
-  }
+    const viewTitleEl = document.getElementById("viewTitle");
+    if (viewTitleEl) {
+        viewTitleEl.textContent = `${poe.code} - ${poe.title}`;
+        viewTitleEl.title = `${poe.code} - ${poe.title}`;
+    }
 
-  const m = document.getElementById("viewModal"); 
-  if (m) { 
-      m.classList.remove("hidden"); 
-      m.classList.add("flex"); 
-      if (scrollToFlowchart) {
-            setTimeout(() => {
+    const m = document.getElementById("viewModal"); 
+    if (m) { 
+        m.classList.remove("hidden"); 
+        m.classList.add("flex"); 
+        
+        // 🧠 Disparamos el Motor SVG
+        setTimeout(() => {
+            if (poe.procedure) {
+                try { 
+                    window.drawFlowchartArrows(JSON.parse(poe.procedure)); 
+                } catch(e) {}
+            }
+            if (scrollToFlowchart) {
                 const el = document.getElementById("acc-flowchart");
                 if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            }, 300);
-        }
+            }
+        }, 300);
     }
 };
 
@@ -1139,35 +1335,83 @@ window.exportPOEToWord = function (id) {
     try {
         const arr = JSON.parse(poe.procedure);
         
+        // 1. FLUJOGRAMA PARA MS WORD
         flowWord = `<div style="text-align: center; margin: 30px 0; font-family: Arial, sans-serif;">
-            <div style="display: inline-block; background-color: #1e3a5f; color: #fff; padding: 6px 25px; border-radius: 20px; font-weight: bold; font-size: 12px; margin-bottom: 5px;">INICIO DEL PROCESO</div><br>`;
+            <div style="display: inline-block; background-color: #1e3a5f; color: #fff; padding: 8px 30px; border-radius: 20px; font-weight: bold; font-size: 13px; margin-bottom: 5px;">INICIO DEL PROCESO</div><br>`;
         
         arr.forEach((s, i) => {
-            let fCol = "#aaaaaa"; let fBg = "#ffffff"; let fLbl = "";
-            if (s.type === 'PCC') { 
-                fCol = "#e3342f"; fBg = "#fef2f2"; fLbl = "<strong style='color:#e3342f; font-size: 10px;'>🛑 PUNTO CRÍTICO DE CONTROL</strong><br>"; 
-            } else if (s.type === 'PC') { 
-                fCol = "#f59e0b"; fBg = "#fffbeb"; fLbl = "<strong style='color:#f59e0b; font-size: 10px;'>⚠️ PUNTO DE CONTROL</strong><br>"; 
-            } else if (s.type === 'SEG') { 
-                fCol = "#38c172"; fBg = "#f0fff4"; fLbl = "<strong style='color:#38c172; font-size: 10px;'>🛡️ SEGURIDAD</strong><br>"; 
-            }
+            let fCol = "#888888"; let fBg = "#ffffff"; let fLbl = "";
+            let devHtmlWord = "";
+            if (s.type === 'PCC') { fCol = "#dc2626"; fBg = "#fef2f2"; fLbl = "<strong style='color:#dc2626; font-size: 11px;'>🛑 PUNTO CRÍTICO DE CONTROL</strong><br>"; }
+            else if (s.type === 'PC') { fCol = "#d97706"; fBg = "#fffbeb"; fLbl = "<strong style='color:#d97706; font-size: 11px;'>⚠️ PUNTO DE CONTROL</strong><br>"; }
+            else if (s.type === 'SEG') { fCol = "#16a34a"; fBg = "#f0fff4"; fLbl = "<strong style='color:#16a34a; font-size: 11px;'>🛡️ SEGURIDAD</strong><br>"; }
             
-            const pText = s.desc.replace(/<[^>]*>?/gm, '').substring(0, 90) + "...";
+            if ((s.type === 'PC' || s.type === 'PCC') && (s.devAction || s.devRoute)) {
+                let routeName = s.devRoute;
+                if (s.devRoute === "FIN") {
+                    routeName = "Fin / Desecho";
+                } else if (s.devRoute) {
+                    const targetIdx = arr.findIndex(x => String(x.id) === String(s.devRoute));
+                    if (targetIdx > -1) routeName = `Paso ${targetIdx + 1}`;
+                }
+                
+                devHtmlWord = `<br><div style="margin-top: 8px; font-size: 10px; color: #991b1b; background-color: #fee2e2; padding: 5px; border-radius: 4px; text-align: left;">
+                    <strong>Medidas ante Desviación:</strong><br>
+                    ${s.devLimit ? `• Límite: ${s.devLimit}<br>` : ''}
+                    ${s.devAction ? `• Acción: ${s.devAction}<br>` : ''}
+                    ${routeName ? `• Ruta: ${routeName}` : ''}
+                </div>`;
+            }
+
+            const tempDiv = document.createElement('div'); tempDiv.innerHTML = s.desc;
+            let stepTitle = `Paso ${i + 1}`;
+            const h3 = tempDiv.querySelector('h3'); const b = tempDiv.querySelector('b');
+            if (h3) { stepTitle = h3.innerText; h3.remove(); } else if (b) { stepTitle = b.innerText; b.remove(); }
+            
+            const listItems = Array.from(tempDiv.querySelectorAll('li')).map(li => `• ${li.innerText}`);
+            tempDiv.querySelectorAll('ul, ol').forEach(list => list.remove());
+            const remainingText = tempDiv.innerText.trim().substring(0, 90) + (tempDiv.innerText.length > 90 ? "..." : "");
+            
+            let bodyText = "";
+            if (listItems.length > 0) bodyText = listItems.slice(0,4).join('<br>');
+            else if (remainingText) bodyText = remainingText;
             
             flowWord += `
-            <div style="margin: 0 auto; width: 2px; height: 18px; background-color: #666;"></div>
-            <div style="margin: 0 auto; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 5px solid #666;"></div>
-            <div style="display: inline-block; border: 2px solid ${fCol}; background-color: ${fBg}; padding: 10px; width: 260px; text-align: center; font-size: 12px; margin-top: 3px; border-radius: 8px; box-shadow: 2px 2px 5px #ddd;">
-                <strong style="display: block; margin-bottom: 5px;">Paso ${i+1}</strong> ${fLbl}${pText}
+            <div style="margin: 0 auto; width: 2px; height: 25px; background-color: #555;"></div>
+            <div style="margin: 0 auto; width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 6px solid #555;"></div>
+            <div style="display: inline-block; border: 2px solid ${fCol}; background-color: ${fBg}; padding: 12px; width: 280px; text-align: center; font-size: 12px; margin-top: 3px; border-radius: 8px; box-shadow: 2px 2px 5px #ddd;">
+                ${fLbl}
+                <strong style="display: block; margin-bottom: 5px; border-bottom: 1px solid #ccc; padding-bottom: 5px; color: #111;">${stepTitle}</strong>
+                <div style="font-size: 11px; color: #444; text-align: left; line-height: 1.4;">${bodyText}</div>
+                ${devHtmlWord}
             </div><br>`;
         });
         
         flowWord += `
-        <div style="margin: 0 auto; width: 2px; height: 18px; background-color: #666;"></div>
-        <div style="margin: 0 auto; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 5px solid #666;"></div>
-        <div style="display: inline-block; background-color: #1e3a5f; color: #fff; padding: 6px 25px; border-radius: 20px; font-weight: bold; font-size: 12px; margin-top: 3px;">FIN DEL PROCESO</div></div><br><hr>`;
+        <div style="margin: 0 auto; width: 2px; height: 25px; background-color: #555;"></div>
+        <div style="margin: 0 auto; width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 6px solid #555;"></div>
+        <div style="display: inline-block; background-color: #1e3a5f; color: #fff; padding: 8px 30px; border-radius: 20px; font-weight: bold; font-size: 13px; margin-top: 3px;">FIN DEL PROCESO</div></div>`;
 
-        stepsHTML = arr.map((s, i) => `<div style="margin-bottom: 20px;"><p><strong>Paso ${i + 1}</strong> <span style="color: #555;">[${s.type}]</span></p><div style="margin-top: 0;">${s.desc}</div>${s.image ? `<img src="${s.image}" width="400" style="border: 1px solid #ccc; margin-top: 10px;">` : ""}</div>`).join("");
+        // 2. DESARROLLO DEL PROCEDIMIENTO
+        stepsHTML = arr.map((s, i) => {
+            let routeName = s.devRoute;
+            if (s.devRoute === "FIN") {
+                routeName = "Fin / Desecho";
+            } else if (s.devRoute) {
+                const targetIdx = arr.findIndex(x => String(x.id) === String(s.devRoute));
+                if (targetIdx > -1) routeName = `Paso ${targetIdx + 1}`;
+            }
+
+            const devHtmlDoc = (s.type === 'PC' || s.type === 'PCC') && (s.devAction || s.devRoute) ? 
+                `<div style="margin-top: 10px; padding: 10px; background-color: #fef2f2; border: 1px solid #fecaca; font-size: 12px; color: #991b1b;">
+                    <strong>MEDIDAS ANTE DESVIACIÓN:</strong><br>
+                    ${s.devLimit ? `<strong>Límite:</strong> ${s.devLimit}<br>` : ''}
+                    ${s.devAction ? `<strong>Acción Correctiva:</strong> ${s.devAction}<br>` : ''}
+                    ${routeName ? `<strong>Direccionamiento:</strong> ${routeName}` : ''}
+                </div>` : '';
+
+            return `<div style="margin-bottom: 25px;"><p><strong>Paso ${i + 1}</strong> <span style="color: #666; font-size: 12px;">[${s.type}]</span></p><div style="margin-top: 5px; line-height: 1.5;">${s.desc}</div>${devHtmlDoc}${s.image ? `<img src="${s.image}" width="400" style="border: 1px solid #ccc; margin-top: 10px; border-radius: 8px;">` : ""}</div>`;
+        }).join("");
     } catch (e) { 
         stepsHTML = `<p>${poe.procedure}</p>`; 
     }
@@ -1177,13 +1421,19 @@ window.exportPOEToWord = function (id) {
     const isPOES = poe.code.startsWith('POES'); 
     const docTitle = isPOES ? 'Procedimiento Operativo Estandarizado de Saneamiento' : 'Procedimiento Operativo Estandarizado';
 
+    // 🧠 INYECCIÓN DE SALTOS DE PÁGINA: <br clear=all style='mso-special-character:line-break;page-break-before:always'>
     const htmlStr = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><title>${poe.code}</title><style>body { font-family: 'Arial'; color: #000; } table { width: 100%; border-collapse: collapse; margin-bottom: 20px; } th, td { border: 1px solid #000; padding: 8px; text-align: left; vertical-align: top; } th { background-color: #f2f2f2; width: 25%; } h1 { color: #1e3a5f; font-size: 24px; text-transform: uppercase; text-align: center; border-bottom: 2px solid #1e3a5f; padding-bottom: 10px; margin-bottom: 20px; } h2 { color: #2d5a87; font-size: 16px; border-bottom: 1px solid #ccc; padding-bottom: 4px; margin-top: 25px; } ul { list-style-type: disc; margin-left: 20px; margin-bottom: 5px; } ol { list-style-type: decimal; margin-left: 20px; margin-bottom: 5px; } a { color: #0000EE; text-decoration: underline; } h3 { color: #1e3a5f; font-size: 14px; margin-top: 15px; margin-bottom: 5px; text-transform: uppercase; }</style></head><body>
         <h1>La Genovesa Agroindustrias S.A.<br><span style="font-size:16px;">${docTitle}</span></h1>
         <table><tr><th>Código:</th><td>${poe.code}</td><th>Versión:</th><td>v${poe.version} - ${poe.status}</td></tr><tr><th>Título:</th><td colspan="3"><strong>${poe.title}</strong></td></tr><tr><th>Área:</th><td>${catName}</td><th>Fecha:</th><td>${new Date(poe.date).toLocaleDateString()}</td></tr></table>
         <h2>1. Contexto Operativo</h2><p><strong>Objetivo:</strong></p> ${poe.objective || "N/A"}<p><strong>Alcance:</strong></p> ${poe.scope || "N/A"}<p><strong>Responsabilidades:</strong></p> ${poe.responsibles || "N/A"}
         <h2>2. Control y Recursos</h2><p><strong>Frecuencia:</strong></p> ${poe.monitoring || poe.frequency || "N/A"}<p><strong>Acciones Correctivas:</strong></p> ${poe.corrective_actions || "N/A"}<p><strong>Equipos y Materiales:</strong></p> ${poe.materials || "N/A"}<p><strong>Definiciones:</strong></p> ${poe.definitions || "N/A"}<p><strong>Registros:</strong></p> ${poe.records || "N/A"} | ${poe.references || ""}
+        
+        <br clear=all style='mso-special-character:line-break;page-break-before:always'>
         <h2>3. Flujograma del Proceso</h2>${flowWord}
+        
+        <br clear=all style='mso-special-character:line-break;page-break-before:always'>
         <h2>4. Desarrollo Detallado</h2><div style="border: 1px solid #000; padding: 15px;">${stepsHTML}</div>
+        
         <table style="border: none; margin-top: 50px;"><tr style="border: none;">
         <td style="border: none; text-align: center; width: 50%;">_________________________<br><strong>Elaborado/Editado por:</strong><br>${poe.lastEditor || poe.author || 'Responsable de Área'}</td>
         <td style="border: none; text-align: center; width: 50%;">_________________________<br><strong>Aprobación Calidad</strong></td></tr></table></body></html>`;
@@ -1198,7 +1448,7 @@ window.exportPOEToWord = function (id) {
 };
 
 // ==========================================
-// PASOS OPERATIVOS WYSIWYG (GESTIÓN)
+// BUILDER DE PASOS WYSIWYG
 // ==========================================
 window.updateFileText = function (input) { 
     const d = document.getElementById("fileNameDisplay"); 
@@ -1212,6 +1462,38 @@ window.updateFileText = function (input) {
     } 
 };
 
+// 🧠 NUEVA FUNCIÓN: Actualiza el <select> de rutas con los pasos existentes
+window.updateRouteSelect = function(selectedId = "") {
+    const routeSelect = document.getElementById("stepDeviationRoute");
+    if (!routeSelect) return;
+    
+    let options = '<option value="">Seleccione destino...</option>';
+    state.form.advancedSteps.forEach((step, index) => {
+        options += `<option value="${step.id}">Volver al Paso ${index + 1} - [${step.type}]</option>`;
+    });
+    options += '<option value="FIN" class="font-bold text-red-600">Fin del Proceso / Desecho</option>';
+    
+    routeSelect.innerHTML = options;
+    if (selectedId) routeSelect.value = selectedId;
+};
+
+window.toggleDeviationFields = function() {
+    const type = document.getElementById("stepType").value;
+    const container = document.getElementById("deviationContainer");
+    
+    if (type === "PC" || type === "PCC") {
+        container.classList.remove("hidden");
+        container.classList.add("grid");
+        window.updateRouteSelect(); // Cargamos los pasos en el select
+    } else {
+        container.classList.add("hidden");
+        container.classList.remove("grid");
+        document.getElementById("stepDeviationLimit").value = "";
+        document.getElementById("stepDeviationAction").value = "";
+        document.getElementById("stepDeviationRoute").value = "";
+    }
+};
+
 window.addAdvancedStep = async function () {
     const desc = getFieldValue("stepDesc"); 
     if (!desc || desc === "<br>") {
@@ -1219,23 +1501,38 @@ window.addAdvancedStep = async function () {
     }
     
     const type = document.getElementById("stepType") ? document.getElementById("stepType").value : "INFO";
-    
+    const devLimit = document.getElementById("stepDeviationLimit")?.value.trim() || "";
+    const devAction = document.getElementById("stepDeviationAction")?.value.trim() || "";
+    const devRoute = document.getElementById("stepDeviationRoute")?.value.trim() || "";
+
+    // 🛡️ Validación Estricta Normativa GFSI
+    if ((type === "PC" || type === "PCC") && (!devLimit || !devAction || !devRoute)) {
+        return await window.sysAlert("Los Puntos Críticos (PCC) o de Control (PC) requieren definir:\n1. Límite Crítico\n2. Acción Correctiva\n3. Direccionamiento", "warning");
+    }
+
     const processStep = (imgB64) => { 
         if (state.form.editingStepId) { 
             const idx = state.form.advancedSteps.findIndex(s => s.id === state.form.editingStepId); 
             if (idx > -1) { 
                 state.form.advancedSteps[idx].desc = desc; 
                 state.form.advancedSteps[idx].type = type; 
+                state.form.advancedSteps[idx].devLimit = devLimit; 
+                state.form.advancedSteps[idx].devAction = devAction; 
+                state.form.advancedSteps[idx].devRoute = devRoute; 
                 if (imgB64 !== undefined) {
                     state.form.advancedSteps[idx].image = imgB64; 
                 }
             } 
         } else { 
-            state.form.advancedSteps.push({ id: Date.now(), desc, type, image: imgB64 || null }); 
+            state.form.advancedSteps.push({ 
+                id: Date.now(), 
+                desc, type, devLimit, devAction, devRoute, 
+                image: imgB64 || null 
+            }); 
         } 
         _resetStepUI(); 
     };
-    
+
     const fileInput = document.getElementById("stepImage");
     if (fileInput && fileInput.files.length > 0) { 
         const reader = new FileReader(); 
@@ -1263,13 +1560,18 @@ window.addAdvancedStep = async function () {
 function _resetStepUI() { 
     setFieldValue("stepDesc", ""); 
     const f = document.getElementById("stepImage"); 
-    if (f) { 
-        f.value = ""; window.updateFileText(f); 
-    } 
+    if (f) { f.value = ""; window.updateFileText(f); } 
+    
+    document.getElementById("stepType").value = "INFO";
+    document.getElementById("stepDeviationLimit").value = "";
+    document.getElementById("stepDeviationAction").value = "";
+    document.getElementById("stepDeviationRoute").value = "";
+    window.toggleDeviationFields();
+
     state.form.editingStepId = null; 
     const btn = document.getElementById("btnAddStep"); 
     if(btn) { 
-        btn.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"></path></svg> Añadir Paso`; 
+        btn.innerHTML = `Añadir Paso`; 
         btn.classList.replace("bg-green-600", "bg-blue-600"); 
         btn.classList.replace("hover:bg-green-800", "hover:bg-blue-800"); 
     } 
@@ -1287,8 +1589,13 @@ window.editStep = function(id) {
     
     setFieldValue("stepDesc", s.desc); 
     document.getElementById("stepType").value = s.type; 
-    state.form.editingStepId = id; 
     
+    document.getElementById("stepDeviationLimit").value = s.devLimit || "";
+    document.getElementById("stepDeviationAction").value = s.devAction || "";
+    window.toggleDeviationFields(); 
+    window.updateRouteSelect(s.devRoute);
+
+    state.form.editingStepId = id; 
     const btn = document.getElementById("btnAddStep"); 
     if(btn) { 
         btn.innerHTML = `Actualizar Paso`; 
@@ -1316,14 +1623,18 @@ window.loadPoesTemplate = async function() {
         const ok = await window.sysConfirm("Se reemplazarán los pasos actuales. ¿Cargar plantilla?"); 
         if (!ok) return; 
     }
+    const t = Date.now();
+    // Vinculamos las rutas con los IDs reales
+    const id1 = t+1, id2 = t+2, id3 = t+3, id4 = t+4, id5 = t+5, id6 = t+6, id7 = t+7;
+    
     state.form.advancedSteps = [ 
-        { id: Date.now()+1, type: 'INFO', desc: '<b>PASO 1: Limpieza en Seco.</b> Retirar restos gruesos, desarmar y proteger componentes eléctricos.', image: null }, 
-        { id: Date.now()+2, type: 'INFO', desc: '<b>PASO 2: Pre-enjuague.</b> Aplicar agua a presión para remover suciedad suelta.', image: null }, 
-        { id: Date.now()+3, type: 'PC', desc: '<b>PASO 3: Lavado (Acción Mecánica).</b> Aplicar detergente y fregar con escobillas.', image: null }, 
-        { id: Date.now()+4, type: 'INFO', desc: '<b>PASO 4: Enjuague Final.</b> Aplicar agua potable hasta eliminar químicos.', image: null }, 
-        { id: Date.now()+5, type: 'PC', desc: '<b>PASO 5: Inspección.</b> Verificación visual minuciosa.', image: null }, 
-        { id: Date.now()+6, type: 'PCC', desc: '<b>PASO 6: Sanitización.</b> Aplicar desinfectante respetando PPM y tiempo.', image: null }, 
-        { id: Date.now()+7, type: 'INFO', desc: '<b>PASO 7: Secado y Montaje.</b> Retirar humedad y re-ensamblar.', image: null } 
+        { id: id1, type: 'INFO', desc: '<b>PASO 1: Limpieza en Seco.</b> Retirar restos gruesos, desarmar y proteger componentes eléctricos.', image: null }, 
+        { id: id2, type: 'INFO', desc: '<b>PASO 2: Pre-enjuague.</b> Aplicar agua a presión para remover suciedad suelta.', image: null }, 
+        { id: id3, type: 'PC', desc: '<b>PASO 3: Lavado (Acción Mecánica).</b> Aplicar detergente y fregar con escobillas.', devLimit: 'Superficie sin grasa visible', devAction: 'Volver a lavar', devRoute: String(id3), image: null }, 
+        { id: id4, type: 'INFO', desc: '<b>PASO 4: Enjuague Final.</b> Aplicar agua potable hasta eliminar químicos.', image: null }, 
+        { id: id5, type: 'PC', desc: '<b>PASO 5: Inspección.</b> Verificación visual minuciosa.', devLimit: 'Ausencia total de residuos', devAction: 'Re-lavado localizado', devRoute: String(id3), image: null }, 
+        { id: id6, type: 'PCC', desc: '<b>PASO 6: Sanitización.</b> Aplicar desinfectante respetando PPM y tiempo.', devLimit: '150-200 ppm, 10 min', devAction: 'Ajustar dosis PPM', devRoute: String(id6), image: null }, 
+        { id: id7, type: 'INFO', desc: '<b>PASO 7: Secado y Montaje.</b> Retirar humedad y re-ensamblar.', image: null } 
     ];
     window.renderAdvancedSteps();
 };
@@ -1340,6 +1651,23 @@ window.renderAdvancedSteps = function () {
     container.innerHTML = state.form.advancedSteps.map((s, i) => {
         const bColor = s.type === "PCC" ? "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400" : s.type === "PC" ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400" : "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300";
         const imgHTML = s.image ? `<img src="${s.image}" class="mt-2 h-16 object-cover rounded border dark:border-gray-600">` : "";
+        
+        // 🧠 Traductor de ID a Nombre de Paso para la vista previa
+        let routeName = s.devRoute;
+        if (s.devRoute === "FIN") {
+            routeName = "Fin / Desecho";
+        } else if (s.devRoute) {
+            const targetIdx = state.form.advancedSteps.findIndex(x => String(x.id) === String(s.devRoute));
+            if (targetIdx > -1) routeName = `Paso ${targetIdx + 1}`;
+        }
+        
+        const devHtml = (s.type === 'PC' || s.type === 'PCC') ? 
+            `<div class="mt-2 p-2 bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-800/50 rounded-lg text-[10px] text-red-800 dark:text-red-300 flex flex-col gap-0.5">
+                ${s.devLimit ? `<span><strong>🎯 Límite:</strong> ${s.devLimit}</span>` : ''}
+                ${s.devAction ? `<span><strong>⚡ Acción:</strong> ${s.devAction}</span>` : ''}
+                ${routeName ? `<span><strong>🔄 Ruta:</strong> ${routeName}</span>` : ''}
+            </div>` : '';
+
         return `
         <div class="bg-gray-50 dark:bg-gray-900/50 p-3 rounded-xl border border-gray-200 dark:border-gray-700 mb-2 flex gap-3 group">
             <div class="flex flex-col items-center gap-1 shrink-0">
@@ -1358,6 +1686,7 @@ window.renderAdvancedSteps = function () {
                     </div>
                 </div>
                 <div class="text-sm font-medium leading-relaxed rich-text-content">${s.desc}</div>
+                ${devHtml}
                 ${imgHTML}
             </div>
         </div>`;
