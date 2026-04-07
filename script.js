@@ -1817,25 +1817,24 @@ document.addEventListener("DOMContentLoaded", async () => {
     window.updateNet(navigator.onLine ? "online" : "offline"); 
     await POEDB.init(); 
     
-    if (!state.user) { 
-        state.user = { nombre: 'Ing. Supervisor', rol: 'SUPERVISOR', area: ['PROD-SKN', 'AREA-14'], usuario: 'dev' }; 
-        state.isSessionVerified = true; 
-    }
+    // 1. Intentamos recuperar el usuario si la página se recargó (F5)
     const savedUser = sessionStorage.getItem('moduloUserPOE'); 
     if (savedUser) { 
         state.user = JSON.parse(savedUser); 
         state.isSessionVerified = true; 
+        await window.refreshUI(); // Renderizamos la UI solo si hay usuario en caché
     }
     
-    await window.refreshUI(); 
-    
+    // 2. Inicializamos componentes visuales
     setTimeout(() => { 
         window.initRichEditors(); 
         window.switchTab('dashboard'); 
     }, 100); 
     
+    // 3. 📡 AVISAMOS AL HUB PADRE QUE ESTAMOS LISTOS PARA RECIBIR EL USUARIO
     window.parent.postMessage({ type: 'MODULO_LISTO' }, '*');
     
+    // 4. Arrancamos rutinas de sincronización en segundo plano
     setTimeout(async () => { 
         await window.pullSync(); 
         window.pushSync(); 
