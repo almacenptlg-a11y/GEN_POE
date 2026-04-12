@@ -215,7 +215,10 @@ window.switchTab = function(tabId) {
         if(topTitle) topTitle.textContent = "Áreas de la Planta"; 
         if(topSub) topSub.textContent = "Organización Estructural"; 
         if(btnNuevo) btnNuevo.classList.add('hidden'); 
+        
+        // 🛡️ Verificación de permisos para el botón Nueva Área
         if(btnArea) {
+            const permisos = window.getPermisos();
             if(permisos.canManageAreas) {
                 btnArea.classList.remove('hidden');
             } else {
